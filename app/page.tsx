@@ -377,12 +377,11 @@ export default function Page() {
             <div className="space-y-4">
               <div className="flex items-center gap-2 text-[0.7rem] font-medium tracking-[0.28em] text-muted-foreground uppercase">
                 <span className="inline-flex size-2 bg-foreground" />
-                NPI CSV Enricher
+                NPI Enricher
               </div>
               <div className="space-y-3">
                 <h1 className="max-w-2xl text-3xl font-medium tracking-[-0.06em] text-balance sm:text-5xl">
-                  Enrich healthcare outreach lists without sending the CSV to a
-                  server.
+                  Enrich healthcare outreach lists via NPI
                 </h1>
                 <p className="max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
                   Upload a CSV, map the NPI column, choose the CMS data points to
@@ -391,8 +390,8 @@ export default function Page() {
               </div>
             </div>
             <div className="grid gap-3 border-t border-border pt-4 text-sm sm:border-t-0 sm:border-s sm:pt-0 sm:ps-5">
-              <InfoLine label="Project" value="Client-side workflow" />
-              <InfoLine label="Lookup path" value="CMS registry via Next proxy" />
+              <InfoLine label="Project" value="LookNPI" />
+              <InfoLine label="Lookup path" value="Official NPI API" />
               <InfoLine label="Concurrency" value="12 requests / batch" />
             </div>
           </header>
@@ -761,14 +760,11 @@ export default function Page() {
               Notes
             </p>
             <div className="mt-4 space-y-3 text-sm leading-6 text-muted-foreground">
-              <p>CSV parsing and export stay in the browser with Papa Parse.</p>
-              <p>
-                NPI lookups pass through a local Next route because the live CMS
-                endpoint did not expose CORS headers during verification.
-              </p>
+             
               <p className="flex items-center gap-2 text-foreground">
-                <ArrowRight className="size-4" />
+                
                 Replace the file anytime to restart the workflow.
+                <ArrowRight className="size-4" />
               </p>
             </div>
           </div>
