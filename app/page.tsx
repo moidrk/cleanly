@@ -8,6 +8,7 @@ import {
   AlertCircle,
   ArrowRight,
   CheckCircle2,
+  Copy,
   Download,
   FileSpreadsheet,
   LoaderCircle,
@@ -107,6 +108,12 @@ export default function Page() {
   const [errorMessage, setErrorMessage] = useState("")
   const [isDragging, setIsDragging] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [singleNpi, setSingleNpi] = useState("")
+  const [singleLookupResult, setSingleLookupResult] =
+    useState<NpiLookupResponse | null>(null)
+  const [singleLookupError, setSingleLookupError] = useState("")
+  const [isSingleLookupLoading, setIsSingleLookupLoading] = useState(false)
+  const [copyStatus, setCopyStatus] = useState("")
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const logViewportRef = useRef<HTMLDivElement>(null)
@@ -366,6 +373,71 @@ export default function Page() {
     anchor.click()
     URL.revokeObjectURL(downloadUrl)
   }, [exportHeaders, exportRows, fileName])
+
+  const runSingleLookup = useCallback(async () => {
+    const normalizedNpi = normalizeNpi(singleNpi)
+
+    if (!normalizedNpi) {
+      setSingleLookupResult(null)
+      setSingleLookupError("Enter a valid 10-digit NPI number.")
+      return
+    }
+
+    setIsSingleLookupLoading(true)
+    setSingleLookupError("")
+    setCopyStatus("")
+
+    try {
+      const response = await fetch(
+        `/api/npi?number=${encodeURIComponent(normalizedNpi)}`,
+        {
+          cache: "no-store",
+        }
+      )
+
+      const payload = (await response.json()) as NpiLookupResponse
+
+      if (!response.ok) {
+        setSingleLookupResult(null)
+        setSingleLookupError(payload.error ?? "Lookup failed.")
+        return
+      }
+
+      if (!payload.found) {
+        setSingleLookupResult(payload)
+        setSingleLookupError(payload.error ?? "NPI not found.")
+        return
+      }
+
+      setSingleLookupResult(payload)
+    } catch {
+      setSingleLookupResult(null)
+      setSingleLookupError("The lookup request failed. Please try again.")
+    } finally {
+      setIsSingleLookupLoading(false)
+    }
+  }, [singleNpi])
+
+  const copySingleLookupResults = useCallback(async () => {
+    if (!singleLookupResult) {
+      return
+    }
+
+    const copyText = Object.entries(NPI_FIELD_DEFINITIONS)
+      .map(([fieldKey, definition]) => {
+        const value =
+          singleLookupResult.fields[fieldKey as EnrichFieldKey] || ""
+        return `${definition.header}: ${value}`
+      })
+      .join("\n")
+
+    try {
+      await navigator.clipboard.writeText(copyText)
+      setCopyStatus("Copied")
+    } catch {
+      setCopyStatus("Copy failed")
+    }
+  }, [singleLookupResult])
 
   const progressValue = getProgressValue(stats)
 
@@ -722,6 +794,140 @@ export default function Page() {
               />
             </aside>
           </div>
+
+          <section className="border border-border bg-background p-5 sm:p-7">
+            <div className="grid gap-6 lg:grid-cols-[18rem_minmax(0,1fr)]">
+              <div className="space-y-5">
+                <div>
+                  <p className="text-[0.7rem] font-medium tracking-[0.22em] text-muted-foreground uppercase">
+                    Single lookup
+                  </p>
+                  <h2 className="mt-1 text-xl font-medium tracking-[-0.04em]">
+                    Search one NPI
+                  </h2>
+                  <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                    Run a one-off search against the same CMS-backed proxy and
+                    copy the returned fields for a single provider or organization.
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  <label
+                    htmlFor="single-npi"
+                    className="text-[0.7rem] tracking-[0.18em] text-muted-foreground uppercase"
+                  >
+                    NPI number
+                  </label>
+                  <input
+                    id="single-npi"
+                    value={singleNpi}
+                    onChange={(event) => {
+                      setSingleNpi(event.target.value)
+                      setSingleLookupError("")
+                      setCopyStatus("")
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        void runSingleLookup()
+                      }
+                    }}
+                    placeholder="1467550004"
+                    className="h-11 w-full border border-border bg-background px-4 text-sm outline-none transition-colors focus:border-foreground"
+                  />
+                </div>
+
+                <div className="flex flex-wrap gap-3">
+                  <Button onClick={() => void runSingleLookup()}>
+                    <Search />
+                    Search NPI
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => void copySingleLookupResults()}
+                    disabled={!singleLookupResult?.found}
+                  >
+                    <Copy />
+                    Copy Results
+                  </Button>
+                </div>
+
+                <div className="space-y-2 text-sm">
+                  {isSingleLookupLoading ? (
+                    <p className="flex items-center gap-2 text-muted-foreground">
+                      <LoaderCircle className="size-4 animate-spin" />
+                      Fetching record...
+                    </p>
+                  ) : null}
+                  {singleLookupError ? (
+                    <p className="text-destructive">{singleLookupError}</p>
+                  ) : null}
+                  {copyStatus ? (
+                    <p className="text-muted-foreground">{copyStatus}</p>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="min-w-0 border border-border">
+                <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                  <div>
+                    <p className="text-[0.7rem] tracking-[0.2em] text-muted-foreground uppercase">
+                      Result table
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {singleLookupResult?.number
+                        ? `NPI ${singleLookupResult.number}`
+                        : "Search an NPI to view returned fields"}
+                    </p>
+                  </div>
+                  {singleLookupResult?.found ? (
+                    <span className="text-[0.7rem] tracking-[0.18em] text-muted-foreground uppercase">
+                      Found
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="min-w-full border-collapse text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-left">
+                        <th className="px-4 py-3 font-medium">Field</th>
+                        <th className="px-4 py-3 font-medium">Header</th>
+                        <th className="px-4 py-3 font-medium">Value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(singleLookupResult?.found
+                        ? Object.entries(NPI_FIELD_DEFINITIONS)
+                        : []
+                      ).map(([fieldKey, definition]) => (
+                        <tr key={fieldKey} className="border-b border-border/80 align-top">
+                          <td className="px-4 py-3">{definition.label}</td>
+                          <td className="px-4 py-3 text-xs tracking-[0.12em] text-muted-foreground uppercase">
+                            {definition.header}
+                          </td>
+                          <td className="px-4 py-3">
+                            {singleLookupResult?.fields[fieldKey as EnrichFieldKey] || (
+                              <span className="text-muted-foreground">Empty</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                      {!singleLookupResult?.found ? (
+                        <tr>
+                          <td
+                            colSpan={3}
+                            className="px-4 py-10 text-center text-muted-foreground"
+                          >
+                            No result to display yet.
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </section>
         </section>
 
         <aside className="grid content-start gap-4">
