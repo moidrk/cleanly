@@ -1734,6 +1734,17 @@ export function CleanlyWorkspacePage({
           return
         }
 
+        if (payload.project && options.refresh !== false) {
+          const leads = withCleaningAnalysis(payload.project.leads)
+          setProject({
+            ...payload.project,
+            assignedWeek:
+              payload.project.assignedWeek ||
+              getWeekKey(new Date(payload.project.createdAt)),
+            leads,
+          })
+        }
+
         setPersistenceMessage("Lead update saved.")
         if (options.refresh !== false) {
           await loadSavedProjects()
@@ -1747,7 +1758,7 @@ export function CleanlyWorkspacePage({
   )
 
   const updateLeadWorkspace = useCallback(
-    (leadId: string, patch: Partial<WorkspaceFields>) => {
+    async (leadId: string, patch: Partial<WorkspaceFields>) => {
       const lead = project?.leads.find((item) => item.id === leadId)
       if (!lead) return
 
@@ -1774,15 +1785,15 @@ export function CleanlyWorkspacePage({
 
       if (!currentProjectId) return
 
-      void persistLeadWorkspace(leadId, persistedWorkspace)
+      await persistLeadWorkspace(leadId, persistedWorkspace)
     },
     [currentProjectId, persistLeadWorkspace, project?.leads, updateProjectLeads]
   )
 
-  const confirmLeadDetail = useCallback(() => {
+  const confirmLeadDetail = useCallback(async () => {
     if (!editingLeadId || !editingWorkspace) return
 
-    updateLeadWorkspace(editingLeadId, editingWorkspace)
+    await updateLeadWorkspace(editingLeadId, editingWorkspace)
     closeLeadDetail()
   }, [closeLeadDetail, editingLeadId, editingWorkspace, updateLeadWorkspace])
 
@@ -3431,7 +3442,7 @@ export function CleanlyWorkspacePage({
                                 <Select
                                   value={lead.workspace.outreachStatus}
                                   onChange={(event) =>
-                                    updateLeadWorkspace(lead.id, {
+                                    void updateLeadWorkspace(lead.id, {
                                       outreachStatus: event.target.value as OutreachStatus,
                                       lastContactedAt:
                                         event.target.value === "not_contacted"
@@ -3466,7 +3477,7 @@ export function CleanlyWorkspacePage({
                                 <Select
                                   value={lead.workspace.responseStatus}
                                   onChange={(event) =>
-                                    updateLeadWorkspace(lead.id, {
+                                    void updateLeadWorkspace(lead.id, {
                                       responseStatus: event.target.value as ResponseStatus,
                                       outreachStatus:
                                         event.target.value === "positive" ||
@@ -3505,13 +3516,13 @@ export function CleanlyWorkspacePage({
                                   onOpen={(nextEditor) => setDateEditor(nextEditor)}
                                   onCancel={() => setDateEditor(null)}
                                   onSave={(value) => {
-                                    updateLeadWorkspace(lead.id, {
+                                    void updateLeadWorkspace(lead.id, {
                                       lastContactedAt: value,
                                     })
                                     setDateEditor(null)
                                   }}
                                   onClear={() => {
-                                    updateLeadWorkspace(lead.id, {
+                                    void updateLeadWorkspace(lead.id, {
                                       lastContactedAt: "",
                                     })
                                     setDateEditor(null)
@@ -3531,7 +3542,7 @@ export function CleanlyWorkspacePage({
                                   onOpen={(nextEditor) => setDateEditor(nextEditor)}
                                   onCancel={() => setDateEditor(null)}
                                   onSave={(value) => {
-                                    updateLeadWorkspace(lead.id, {
+                                    void updateLeadWorkspace(lead.id, {
                                       nextFollowUpAt: value,
                                       outreachStatus: value
                                         ? "follow_up_needed"
@@ -3540,7 +3551,7 @@ export function CleanlyWorkspacePage({
                                     setDateEditor(null)
                                   }}
                                   onClear={() => {
-                                    updateLeadWorkspace(lead.id, {
+                                    void updateLeadWorkspace(lead.id, {
                                       nextFollowUpAt: "",
                                     })
                                     setDateEditor(null)
@@ -3863,7 +3874,7 @@ export function CleanlyWorkspacePage({
                 <Button variant="outline" onClick={closeLeadDetail}>
                   Cancel
                 </Button>
-                <Button onClick={confirmLeadDetail}>
+                <Button onClick={() => void confirmLeadDetail()}>
                   <Save />
                   Confirm
                 </Button>
