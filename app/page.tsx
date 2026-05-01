@@ -14,7 +14,6 @@ import {
   parseISO,
   startOfMonth,
   startOfWeek,
-  subWeeks,
 } from "date-fns"
 import Papa from "papaparse"
 import pLimit from "p-limit"
@@ -44,6 +43,7 @@ import {
   Workflow,
   X,
 } from "lucide-react"
+import { AnimatePresence, motion } from "framer-motion"
 import {
   Area,
   AreaChart,
@@ -696,25 +696,38 @@ function getWeekShortLabel(weekKey: string) {
 
 function getWeekOptions(projects: ProjectSummary[], activeProject?: LeadProject | null) {
   const today = new Date()
+  const years = new Set([today.getFullYear()])
   const starts = new Set<string>()
-
-  eachWeekOfInterval(
-    {
-      start: subWeeks(today, 8),
-      end: addWeeks(today, 16),
-    },
-    { weekStartsOn: WEEK_STARTS_ON }
-  ).forEach((weekStart) => {
-    starts.add(getWeekKey(weekStart))
-  })
 
   projects.forEach((project) => {
     const parsed = parseWeekKey(project.uploadWeek)
-    if (parsed) starts.add(getWeekKey(parsed))
+    if (parsed) {
+      years.add(parsed.getFullYear())
+      starts.add(getWeekKey(parsed))
+    }
   })
 
   const activeParsed = parseWeekKey(activeProject?.assignedWeek ?? "")
-  if (activeParsed) starts.add(getWeekKey(activeParsed))
+  if (activeParsed) {
+    years.add(activeParsed.getFullYear())
+    starts.add(getWeekKey(activeParsed))
+  }
+
+  years.forEach((year) => {
+    eachWeekOfInterval(
+      {
+        start: startOfWeek(new Date(year, 0, 1), {
+          weekStartsOn: WEEK_STARTS_ON,
+        }),
+        end: endOfWeek(new Date(year, 11, 31), {
+          weekStartsOn: WEEK_STARTS_ON,
+        }),
+      },
+      { weekStartsOn: WEEK_STARTS_ON }
+    ).forEach((weekStart) => {
+      starts.add(getWeekKey(weekStart))
+    })
+  })
 
   return [...starts].sort()
 }
@@ -1075,6 +1088,10 @@ export function CleanlyWorkspacePage({
   const [isDashboardLoading, setIsDashboardLoading] = useState(false)
   const [dashboardError, setDashboardError] = useState("")
   const [activeOutreachIndex, setActiveOutreachIndex] = useState(0)
+  const [draggedProjectId, setDraggedProjectId] = useState("")
+  const [weeklyDropTarget, setWeeklyDropTarget] = useState("")
+  const [recentlyMovedProjectId, setRecentlyMovedProjectId] = useState("")
+  const [showFullYearWorkflow, setShowFullYearWorkflow] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const currentProjectId = project?.id ?? ""
@@ -1235,10 +1252,26 @@ export function CleanlyWorkspacePage({
     }
   }, [databaseState, loadDashboardAnalytics, loadSavedProjects, project])
 
-  const assignCurrentProjectToWeek = useCallback(
-    (weekKey: string) => {
+  const assignProjectToWeek = useCallback(
+    async (projectId: string, weekKey: string) => {
+      if (!projectId) return
+
+      setRecentlyMovedProjectId(projectId)
+      setPersistenceMessage("Updating workflow week...")
+
+      setSavedProjects((current) =>
+        current.map((savedProject) =>
+          savedProject.id === projectId
+            ? {
+                ...savedProject,
+                uploadWeek: weekKey,
+                updatedAt: new Date().toISOString(),
+              }
+            : savedProject
+        )
+      )
       setProject((current) =>
-        current
+        current?.id === projectId
           ? {
               ...current,
               assignedWeek: weekKey,
@@ -1246,8 +1279,70 @@ export function CleanlyWorkspacePage({
             }
           : current
       )
+
+      try {
+        const response = await fetch(
+          `/api/projects/${encodeURIComponent(projectId)}`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ uploadWeek: weekKey }),
+          }
+        )
+        const payload = (await response.json()) as {
+          ok: boolean
+          project?: LeadProject
+          error?: string
+        }
+
+        if (!response.ok || !payload.ok) {
+          setPersistenceMessage(payload.error ?? "Unable to update file week.")
+          await loadSavedProjects()
+          return
+        }
+
+        if (payload.project && payload.project.id === currentProjectId) {
+          setProject({
+            ...payload.project,
+            assignedWeek: payload.project.assignedWeek || weekKey,
+            leads: withCleaningAnalysis(payload.project.leads),
+          })
+        }
+
+        setPersistenceMessage(
+          weekKey === "unassigned"
+            ? "File moved to unassigned."
+            : `File assigned to ${getWeekRangeLabel(weekKey)}.`
+        )
+        await loadSavedProjects()
+        await loadDashboardAnalytics()
+      } catch {
+        setPersistenceMessage("Unable to reach the workflow update API.")
+        await loadSavedProjects()
+      } finally {
+        window.setTimeout(() => {
+          setRecentlyMovedProjectId("")
+        }, 1600)
+      }
     },
-    []
+    [currentProjectId, loadDashboardAnalytics, loadSavedProjects]
+  )
+
+  const handleWorkflowDrop = useCallback(
+    (event: React.DragEvent<HTMLElement>, weekKey: string) => {
+      event.preventDefault()
+      const projectId =
+        event.dataTransfer.getData("text/cleanly-project-id") || draggedProjectId
+
+      setWeeklyDropTarget("")
+      setDraggedProjectId("")
+      if (!projectId) return
+
+      void assignProjectToWeek(projectId, weekKey)
+    },
+    [assignProjectToWeek, draggedProjectId]
   )
 
   const deleteProjectFromDatabase = useCallback(
@@ -1978,6 +2073,33 @@ export function CleanlyWorkspacePage({
       []
     )
   }, [weekOptions])
+  const visibleWeekGroups = showFullYearWorkflow ? weekGroups : weekGroups.slice(0, 8)
+  const hiddenWorkflowMonthCount = Math.max(weekGroups.length - visibleWeekGroups.length, 0)
+  const unassignedProjects = useMemo(
+    () =>
+      savedProjects.filter(
+        (savedProject) =>
+          !savedProject.uploadWeek ||
+          savedProject.uploadWeek === "unassigned" ||
+          !parseWeekKey(savedProject.uploadWeek)
+      ),
+    [savedProjects]
+  )
+  const assignedProjects = useMemo(
+    () =>
+      savedProjects.filter((savedProject) => {
+        if (
+          !savedProject.uploadWeek ||
+          savedProject.uploadWeek === "unassigned" ||
+          !parseWeekKey(savedProject.uploadWeek)
+        ) {
+          return false
+        }
+
+        return true
+      }),
+    [savedProjects]
+  )
   const leadPageCount = Math.max(1, Math.ceil(filteredLeads.length / leadPageSize))
   const currentLeadPage = Math.min(leadPage, leadPageCount)
   const paginatedLeads = useMemo(() => {
@@ -2787,55 +2909,108 @@ export function CleanlyWorkspacePage({
             </section>
           ) : null}
 
-          {activeTab === "weekly" && hasProject ? (
+          {activeTab === "weekly" ? (
             <div className="grid gap-4">
               <section className="border border-border bg-background p-4">
-                <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,18rem)_11rem]">
+                <div className="flex min-w-0 flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                   <div className="min-w-0">
                     <p className="text-[0.68rem] tracking-[0.2em] text-muted-foreground uppercase">
                       Weekly Workflow
                     </p>
-                    <p className="mt-2 text-2xl font-medium tracking-normal">
-                      {currentWeekLabel}
+                    <p className="mt-2 text-2xl font-medium tracking-[-0.04em]">
+                      Drag files into the right operating week
                     </p>
-                    <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                      Files are grouped by Monday-start calendar weeks and month
-                      sections.
+                    <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+                      Drop a file onto any week to save immediately. Drop it back
+                      into Unassigned to unlink it from the calendar.
                     </p>
                   </div>
-                  <div className="grid min-w-0 gap-2">
-                    <label className="text-[0.68rem] tracking-[0.16em] text-muted-foreground uppercase">
-                      Assign current file
-                    </label>
-                    <Select
-                      value={project!.assignedWeek || getWeekKey(new Date())}
-                      onChange={(event) => assignCurrentProjectToWeek(event.target.value)}
-                      className="w-full"
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => void loadSavedProjects()}
+                      disabled={databaseState === "checking"}
                     >
-                      {weekOptions.map((weekKey) => (
-                        <option key={weekKey} value={weekKey}>
-                          {getWeekShortLabel(weekKey)} - {getWeekRangeLabel(weekKey)}
-                        </option>
-                      ))}
-                    </Select>
+                      <RefreshCcw />
+                      Refresh
+                    </Button>
+                    <Button variant="outline" onClick={() => goToTab("files")}>
+                      <FileSpreadsheet />
+                      Files
+                    </Button>
                   </div>
-                  <Button
-                    onClick={() => void saveProjectToDatabase()}
-                    disabled={isSavingProject}
-                  >
-                    {isSavingProject ? (
-                      <LoaderCircle className="animate-spin" />
-                    ) : (
-                      <Save />
-                    )}
-                    Save Week
-                  </Button>
                 </div>
               </section>
 
-              <section className="grid gap-6">
-                {weekGroups.map((group) => (
-                  <div key={group.month} className="min-w-0">
+              <motion.section
+                layout
+                onDragOver={(event) => {
+                  event.preventDefault()
+                  setWeeklyDropTarget("unassigned")
+                }}
+                onDragLeave={() => setWeeklyDropTarget("")}
+                onDrop={(event) => handleWorkflowDrop(event, "unassigned")}
+                className={[
+                  "border border-border bg-background transition-colors",
+                  weeklyDropTarget === "unassigned"
+                    ? "border-sky-500 bg-sky-50/70 dark:bg-sky-950/20"
+                    : "",
+                  unassignedProjects.length === 0 ? "p-3" : "p-4",
+                ].join(" ")}
+              >
+                <div className="flex min-w-0 items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-[0.68rem] tracking-[0.2em] text-muted-foreground uppercase">
+                      Unassigned Files
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {unassignedProjects.length === 0
+                        ? "Drop here to remove a file from its week."
+                        : `${formatStat(unassignedProjects.length)} file${unassignedProjects.length === 1 ? "" : "s"} waiting for week assignment.`}
+                    </p>
+                  </div>
+                  <StatusPill
+                    label={unassignedProjects.length === 0 ? "Empty" : "Needs sorting"}
+                    tone={unassignedProjects.length === 0 ? "neutral" : "warning"}
+                  />
+                </div>
+                <AnimatePresence mode="popLayout">
+                  {unassignedProjects.length > 0 ? (
+                    <motion.div
+                      layout
+                      className="mt-4 flex gap-3 overflow-x-auto pb-2"
+                    >
+                      {unassignedProjects.map((savedProject) => (
+                        <WorkflowFileCard
+                          key={savedProject.id}
+                          project={savedProject}
+                          variant="unassigned"
+                          isMoved={recentlyMovedProjectId === savedProject.id}
+                          onOpen={() =>
+                            void openSavedProjectInTab(savedProject.id, "leads")
+                          }
+                          onDragStart={(event) => {
+                            setDraggedProjectId(savedProject.id)
+                            event.dataTransfer.setData(
+                              "text/cleanly-project-id",
+                              savedProject.id
+                            )
+                            event.dataTransfer.effectAllowed = "move"
+                          }}
+                          onDragEnd={() => {
+                            setDraggedProjectId("")
+                            setWeeklyDropTarget("")
+                          }}
+                        />
+                      ))}
+                    </motion.div>
+                  ) : null}
+                </AnimatePresence>
+              </motion.section>
+
+              <section className="grid gap-7">
+                {visibleWeekGroups.map((group) => (
+                  <motion.div layout key={group.month} className="min-w-0">
                     <div className="mb-3 flex items-center justify-between gap-4">
                       <p className="text-[0.72rem] font-medium tracking-[0.2em] text-muted-foreground uppercase">
                         {group.month}
@@ -2844,39 +3019,38 @@ export function CleanlyWorkspacePage({
                         {formatStat(group.weeks.length)} weeks
                       </span>
                     </div>
-                    <div className="flex min-w-0 gap-3 overflow-x-auto pb-3">
+                    <div className="flex min-w-0 snap-x gap-3 overflow-x-auto pb-3">
                       {group.weeks.map((weekKey) => {
-                        const weekProjects = savedProjects.filter(
+                        const weekProjects = assignedProjects.filter(
                           (savedProject) =>
-                            savedProject.id !== project?.id &&
-                            getWeekKey(
-                              parseWeekKey(savedProject.uploadWeek) ??
-                                new Date(savedProject.createdAt)
-                            ) === weekKey
+                            getWeekKey(parseWeekKey(savedProject.uploadWeek)!) ===
+                            weekKey
                         )
-                        const hasCurrentProject =
-                          project?.assignedWeek === weekKey ||
-                          (!project?.assignedWeek &&
-                            getWeekKey(new Date(project!.createdAt)) === weekKey)
-                        const totalLeads =
-                          weekProjects.reduce(
-                            (sum, savedProject) => sum + savedProject.rowCount,
-                            0
-                          ) + (hasCurrentProject ? project!.leads.length : 0)
+                        const totalLeads = weekProjects.reduce(
+                          (sum, savedProject) => sum + savedProject.rowCount,
+                          0
+                        )
 
                         return (
-                          <div
+                          <motion.div
+                            layout
                             key={weekKey}
+                            onDragOver={(event) => {
+                              event.preventDefault()
+                              setWeeklyDropTarget(weekKey)
+                            }}
+                            onDragLeave={() => setWeeklyDropTarget("")}
+                            onDrop={(event) => handleWorkflowDrop(event, weekKey)}
                             className={[
-                              "flex min-h-72 w-80 shrink-0 flex-col border bg-background",
-                              hasCurrentProject
-                                ? "border-foreground"
+                              "flex min-h-80 w-[20.5rem] shrink-0 snap-start flex-col border bg-background transition-colors",
+                              weeklyDropTarget === weekKey
+                                ? "border-sky-500 bg-sky-50/70 dark:bg-sky-950/20"
                                 : "border-border",
                             ].join(" ")}
                           >
                             <div className="border-b border-border p-4">
                               <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0 flex-1">
+                                <div className="min-w-0">
                                   <p className="text-sm font-medium">
                                     {getWeekShortLabel(weekKey)}
                                   </p>
@@ -2884,93 +3058,73 @@ export function CleanlyWorkspacePage({
                                     {getWeekRangeLabel(weekKey)}
                                   </p>
                                 </div>
-                                {hasCurrentProject ? (
-                                  <StatusPill label="Selected" tone="info" />
-                                ) : null}
+                                <StatusPill
+                                  label={`${formatStat(weekProjects.length)} files`}
+                                  tone={weekProjects.length > 0 ? "info" : "neutral"}
+                                />
                               </div>
-                              <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
-                                <MiniStat
-                                  label="Files"
-                                  value={
-                                    weekProjects.length + (hasCurrentProject ? 1 : 0)
-                                  }
-                                />
+                              <div className="mt-4 grid grid-cols-2 gap-2 text-center text-xs">
+                                <MiniStat label="Files" value={weekProjects.length} />
                                 <MiniStat label="Leads" value={totalLeads} />
-                                <MiniStat
-                                  label="Review"
-                                  value={hasCurrentProject ? dashboard.needsReview : 0}
-                                />
                               </div>
                             </div>
                             <div className="grid flex-1 content-start gap-2 p-3">
-                              {hasCurrentProject ? (
-                                <button
-                                  onClick={() => goToTab("leads")}
-                                  className="min-w-0 w-full overflow-hidden border border-foreground bg-muted/40 p-3 text-left transition-colors hover:bg-muted"
-                                >
-                                  <TruncatedText
-                                    value={project!.name}
-                                    className="text-sm font-medium"
+                              <AnimatePresence mode="popLayout">
+                                {weekProjects.map((savedProject) => (
+                                  <WorkflowFileCard
+                                    key={savedProject.id}
+                                    project={savedProject}
+                                    variant="assigned"
+                                    isMoved={
+                                      recentlyMovedProjectId === savedProject.id
+                                    }
+                                    onOpen={() =>
+                                      void openSavedProjectInTab(
+                                        savedProject.id,
+                                        "leads"
+                                      )
+                                    }
+                                    onDragStart={(event) => {
+                                      setDraggedProjectId(savedProject.id)
+                                      event.dataTransfer.setData(
+                                        "text/cleanly-project-id",
+                                        savedProject.id
+                                      )
+                                      event.dataTransfer.effectAllowed = "move"
+                                    }}
+                                    onDragEnd={() => {
+                                      setDraggedProjectId("")
+                                      setWeeklyDropTarget("")
+                                    }}
                                   />
-                                  <TruncatedText
-                                    value={project!.fileName}
-                                    className="mt-1 text-xs text-muted-foreground"
-                                  />
-                                  <div className="mt-3 flex flex-wrap gap-2">
-                                    <StatusPill label="Current" tone="info" />
-                                    <StatusPill
-                                      label={`${formatStat(project!.leads.length)} rows`}
-                                      tone="neutral"
-                                    />
-                                  </div>
-                                </button>
-                              ) : null}
+                                ))}
+                              </AnimatePresence>
 
-                              {weekProjects.map((savedProject) => (
-                                <button
-                                  key={savedProject.id}
-                                  onClick={() =>
-                                    void openSavedProjectInTab(savedProject.id, "weekly")
-                                  }
-                                  className="min-w-0 w-full overflow-hidden border border-border p-3 text-left transition-colors hover:border-foreground"
-                                >
-                                  <TruncatedText
-                                    value={savedProject.name}
-                                    className="text-sm font-medium"
-                                  />
-                                  <TruncatedText
-                                    value={savedProject.fileName || "Saved list"}
-                                    className="mt-1 text-xs text-muted-foreground"
-                                  />
-                                  <div className="mt-3 flex flex-wrap gap-2">
-                                    <StatusPill
-                                      label={`${formatStat(savedProject.rowCount)} rows`}
-                                      tone="neutral"
-                                    />
-                                    <StatusPill
-                                      label={savedProject.status}
-                                      tone="info"
-                                    />
-                                  </div>
-                                </button>
-                              ))}
-
-                              {!hasCurrentProject && weekProjects.length === 0 ? (
-                                <button
-                                  onClick={() => assignCurrentProjectToWeek(weekKey)}
-                                  className="grid min-h-24 place-items-center border border-dashed border-border px-3 text-center text-sm text-muted-foreground transition-colors hover:border-foreground hover:text-foreground"
-                                >
-                                  Assign current file here
-                                </button>
-                              ) : null}
+                              <div className="grid min-h-20 place-items-center border border-dashed border-border px-3 text-center text-xs text-muted-foreground transition-colors">
+                                <span className="grid gap-1">
+                                  <span className="text-lg leading-none">+</span>
+                                  <span>Drop another file here</span>
+                                </span>
+                              </div>
                             </div>
-                          </div>
+                          </motion.div>
                         )
                       })}
                     </div>
-                  </div>
+                  </motion.div>
                 ))}
               </section>
+
+              {hiddenWorkflowMonthCount > 0 ? (
+                <div className="flex justify-center">
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowFullYearWorkflow(true)}
+                  >
+                    Show {formatStat(hiddenWorkflowMonthCount)} more months
+                  </Button>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -4956,6 +5110,71 @@ function MiniStat({ label, value }: { label: string; value: number }) {
       <p className="text-muted-foreground">{label}</p>
       <p className="mt-1 font-medium">{formatStat(value)}</p>
     </div>
+  )
+}
+
+function WorkflowFileCard({
+  project,
+  variant,
+  isMoved,
+  onOpen,
+  onDragStart,
+  onDragEnd,
+}: {
+  project: ProjectSummary
+  variant: "assigned" | "unassigned"
+  isMoved: boolean
+  onOpen: () => void
+  onDragStart: (event: React.DragEvent<HTMLButtonElement>) => void
+  onDragEnd: () => void
+}) {
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 10, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -8, scale: 0.98 }}
+      whileHover={{ y: -2 }}
+      transition={{ type: "spring", stiffness: 420, damping: 32 }}
+    >
+      <button
+        draggable
+        onClick={onOpen}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+      className={[
+        "min-w-0 overflow-hidden border p-3 text-left shadow-sm transition-colors",
+        variant === "unassigned"
+          ? "w-72 shrink-0 border-amber-300 bg-amber-50/80 text-amber-950 hover:border-amber-500 dark:bg-amber-950/20 dark:text-amber-100"
+          : "w-full border-border bg-background hover:border-foreground hover:bg-muted/60",
+        isMoved
+          ? "border-emerald-500 bg-emerald-50 text-emerald-950 dark:bg-emerald-950/25 dark:text-emerald-100"
+          : "",
+      ].join(" ")}
+      title="Drag to another week or open in Leads"
+    >
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <TruncatedText value={project.name} className="text-sm font-medium" />
+          <TruncatedText
+            value={project.fileName || "Saved list"}
+            className="mt-1 text-xs opacity-75"
+          />
+        </div>
+        <span className="shrink-0 text-[0.65rem] tracking-[0.18em] opacity-60 uppercase">
+          Drag
+        </span>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <StatusPill label={`${formatStat(project.rowCount)} rows`} tone="neutral" />
+        {variant === "assigned" ? (
+          <StatusPill label={getWeekShortLabel(project.uploadWeek)} tone="info" />
+        ) : (
+          <StatusPill label="Unassigned" tone="warning" />
+        )}
+      </div>
+      </button>
+    </motion.div>
   )
 }
 

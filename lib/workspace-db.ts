@@ -528,6 +528,38 @@ export async function deleteProjectSnapshot(projectId: string) {
   })
 }
 
+export async function updateProjectWeek(projectId: string, uploadWeek: string) {
+  const prisma = getPrisma()
+  const nextWeek = uploadWeek || "unassigned"
+
+  await prisma.$transaction([
+    prisma.leadFile.updateMany({
+      where: { projectId },
+      data: {
+        uploadWeek: nextWeek,
+      },
+    }),
+    prisma.project.update({
+      where: { id: projectId },
+      data: {
+        updatedAt: new Date(),
+      },
+    }),
+    prisma.activityLog.create({
+      data: {
+        entityType: ActivityEntityType.FILE,
+        entityId: projectId,
+        action: "file.week_assigned",
+        metadata: {
+          uploadWeek: nextWeek,
+        },
+      },
+    }),
+  ])
+
+  return getProjectSnapshot(projectId)
+}
+
 export async function updateLeadWorkspace(
   projectId: string,
   leadId: string,

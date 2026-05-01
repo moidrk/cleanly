@@ -4,6 +4,7 @@ import {
   deleteProjectSnapshot,
   getProjectSnapshot,
   saveProjectSnapshot,
+  updateProjectWeek,
   type LeadProjectSnapshot,
 } from "@/lib/workspace-db"
 
@@ -79,6 +80,31 @@ export async function PUT(request: Request, context: RouteContext) {
       {
         ok: false,
         error: "Unable to update project.",
+      },
+      { status: 500 }
+    )
+  }
+}
+
+export async function PATCH(request: Request, context: RouteContext) {
+  if (!process.env.DATABASE_URL) {
+    return databaseUnavailableResponse()
+  }
+
+  try {
+    const { id } = await context.params
+    const payload = (await request.json()) as { uploadWeek?: string }
+    const project = await updateProjectWeek(id, payload.uploadWeek ?? "unassigned")
+
+    return NextResponse.json({
+      ok: true,
+      project,
+    })
+  } catch {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Unable to update project week.",
       },
       { status: 500 }
     )
