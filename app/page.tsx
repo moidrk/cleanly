@@ -1252,6 +1252,20 @@ export function CleanlyWorkspacePage({
     [getTabHref, router]
   )
 
+  const clearCurrentProjectSelection = useCallback(
+    (tab: TabKey = activeTab) => {
+      setProject(null)
+      setSelectedLeadId("")
+      setSelectedLeadIds([])
+      setEditingLeadId("")
+      setEditingWorkspace(null)
+      setDateEditor(null)
+      setActiveView("all")
+      router.push(TAB_ROUTES[tab])
+    },
+    [activeTab, router]
+  )
+
   const pushToast = useCallback((message: string, tone = getToastTone(message)) => {
     const id = crypto.randomUUID()
 
@@ -1287,7 +1301,6 @@ export function CleanlyWorkspacePage({
       })
       setSelectedLeadId(leads[0]?.id ?? "")
       setSelectedLeadIds([])
-      setActiveView("all")
       setDatabaseState("available")
       setLastSavedAt(payload.project.updatedAt)
     } catch {
@@ -3021,13 +3034,6 @@ export function CleanlyWorkspacePage({
           {activeTab === "workspace" && hasProject ? (
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
               <section className="grid content-start gap-4">
-                <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                  <MetricTile label="Total Leads" value={dashboard.total} />
-                  <MetricTile label="Needs Review" value={dashboard.needsReview} />
-                  <MetricTile label="Ready to Contact" value={dashboard.clean} />
-                  <MetricTile label="Follow Ups Due" value={dashboard.followUps} />
-                </section>
-
                 <section className="border border-border bg-background p-4">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                     <div>
@@ -3035,17 +3041,25 @@ export function CleanlyWorkspacePage({
                         Operational Views
                       </p>
                       <p className="mt-1 text-sm text-muted-foreground">
-                        Fast entry points into the lead grid without cluttering the
-                        enrichment surface.
+                        Fast entry points into the lead grid.
                       </p>
                     </div>
-                    <Button
-                      variant="outline"
-                      onClick={() => goToTab("leads", undefined, { view: activeView })}
-                    >
-                      <PanelRight />
-                      Open Lead Grid
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => goToTab("leads", undefined, { view: activeView })}
+                      >
+                        <PanelRight />
+                        Open Lead Grid
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => clearCurrentProjectSelection("leads")}
+                      >
+                        <X />
+                        Clear File
+                      </Button>
+                    </div>
                   </div>
                   <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                     {(Object.keys(VIEW_LABELS) as ViewKey[]).map((view) => (
@@ -3067,22 +3081,6 @@ export function CleanlyWorkspacePage({
                         </p>
                       </button>
                     ))}
-                  </div>
-                </section>
-
-                <section className="border border-border bg-background p-4">
-                  <p className="text-[0.68rem] tracking-[0.2em] text-muted-foreground uppercase">
-                    Current Draft
-                  </p>
-                  <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
-                    <div className="grid min-w-0 gap-4">
-                      <InfoLine label="Display name" value={project!.name} />
-                      <InfoLine label="Original file" value={project!.fileName} />
-                      <InfoLine label="Upload date" value={formatDateOnly(project!.createdAt)} />
-                      <InfoLine label="Upload day" value={formatUploadDay(project!.createdAt)} />
-                      <InfoLine label="Upload week" value={currentWeekLabel} />
-                    </div>
-                    
                   </div>
                 </section>
               </section>
@@ -3138,6 +3136,17 @@ export function CleanlyWorkspacePage({
                     </div>
                   </section>
                 ) : null}
+                <section className="border border-border bg-background p-4">
+                  <p className="text-[0.68rem] tracking-[0.2em] text-muted-foreground uppercase">
+                    Current Draft
+                  </p>
+                  <div className="mt-4 grid gap-3">
+                    <InfoLine label="Display name" value={project!.name} />
+                    <InfoLine label="Original file" value={project!.fileName} />
+                    <InfoLine label="Upload date" value={formatDateOnly(project!.createdAt)} />
+                    <InfoLine label="Upload week" value={currentWeekLabel} />
+                  </div>
+                </section>
               </section>
             </div>
           ) : null}
@@ -3170,18 +3179,18 @@ export function CleanlyWorkspacePage({
                     disabled={!project || isSavingProject}
                   >
                     <Save />
-                    Save opened file
+                    Save CSV
                   </Button>
                   <Button
                     variant="outline"
                     onClick={() => goToTab("enrich", undefined, { pick: "1" })}
                   >
                     <Upload />
-                    New CSV import
+                    Import CSV
                   </Button>
                   <Button variant="outline" onClick={downloadCsv} disabled={!project}>
                     <Download />
-                    Export opened file
+                    Export CSV
                   </Button>
                 </div>
               </div>
@@ -3630,7 +3639,7 @@ export function CleanlyWorkspacePage({
           {activeTab === "leads" ? (
             <div className="grid gap-4">
               <section className="border border-border bg-background p-4">
-                <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_16rem_9rem_9rem_7rem] xl:items-end">
+                <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_9rem_16rem_9rem_9rem_7rem] xl:items-end">
                   <div className="min-w-0">
                     <p className="text-[0.68rem] tracking-[0.2em] text-muted-foreground uppercase">
                       Lead File
@@ -3655,6 +3664,14 @@ export function CleanlyWorkspacePage({
                       ))}
                     </Select>
                   </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => clearCurrentProjectSelection("leads")}
+                    disabled={!project}
+                  >
+                    <X />
+                    Clear File
+                  </Button>
                   <div className="min-w-0">
                     <p className="text-[0.68rem] tracking-[0.2em] text-muted-foreground uppercase">
                       Export
