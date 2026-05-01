@@ -1077,6 +1077,7 @@ export function CleanlyWorkspacePage({
   const [activeOutreachIndex, setActiveOutreachIndex] = useState(0)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const currentProjectId = project?.id ?? ""
 
   const goToTab = useCallback(
     (tab: TabKey) => {
@@ -1703,28 +1704,80 @@ export function CleanlyWorkspacePage({
     [project, updateProjectLeads]
   )
 
+  const persistLeadWorkspace = useCallback(
+    async (
+      leadId: string,
+      workspace: WorkspaceFields,
+      options: { refresh?: boolean } = {}
+    ) => {
+      if (!currentProjectId) return
+
+      try {
+        const response = await fetch(
+          `/api/projects/${encodeURIComponent(currentProjectId)}/leads/${encodeURIComponent(leadId)}`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ workspace }),
+          }
+        )
+        const payload = (await response.json()) as {
+          ok: boolean
+          project?: LeadProject
+          error?: string
+        }
+
+        if (!response.ok || !payload.ok) {
+          setPersistenceMessage(payload.error ?? "Unable to persist lead update.")
+          return
+        }
+
+        setPersistenceMessage("Lead update saved.")
+        if (options.refresh !== false) {
+          await loadSavedProjects()
+          await loadDashboardAnalytics()
+        }
+      } catch {
+        setPersistenceMessage("Unable to reach the lead update API.")
+      }
+    },
+    [currentProjectId, loadDashboardAnalytics, loadSavedProjects]
+  )
+
   const updateLeadWorkspace = useCallback(
     (leadId: string, patch: Partial<WorkspaceFields>) => {
+      let persistedWorkspace: WorkspaceFields | null = null
+
       updateProjectLeads((leads) =>
         leads.map((lead) =>
-          lead.id === leadId
-            ? {
-                ...lead,
-                workspace: {
-                  ...lead.workspace,
-                  ...patch,
-                  attemptCount:
-                    patch.outreachStatus && patch.outreachStatus !== "not_contacted"
-                      ? Math.max(lead.workspace.attemptCount, 1)
-                      : patch.attemptCount ?? lead.workspace.attemptCount,
-                },
-                updatedAt: new Date().toISOString(),
-              }
-            : lead
+          {
+            if (lead.id !== leadId) return lead
+
+            persistedWorkspace = {
+              ...lead.workspace,
+              ...patch,
+              attemptCount:
+                patch.outreachStatus && patch.outreachStatus !== "not_contacted"
+                  ? Math.max(lead.workspace.attemptCount, 1)
+                  : patch.attemptCount ?? lead.workspace.attemptCount,
+            }
+
+            return {
+              ...lead,
+              workspace: persistedWorkspace,
+              updatedAt: new Date().toISOString(),
+            }
+          }
         )
       )
+
+      if (!currentProjectId || !persistedWorkspace) return
+
+      void persistLeadWorkspace(leadId, persistedWorkspace)
     },
-    [updateProjectLeads]
+    [currentProjectId, persistLeadWorkspace, updateProjectLeads]
   )
 
   const confirmLeadDetail = useCallback(() => {
@@ -1736,31 +1789,50 @@ export function CleanlyWorkspacePage({
 
   const applyBulkOutreach = useCallback(() => {
     if (selectedLeadIds.length === 0) return
+    const updates: Array<{ leadId: string; workspace: WorkspaceFields }> = []
 
     updateProjectLeads((leads) =>
-      leads.map((lead) =>
-        selectedLeadIds.includes(lead.id)
-          ? {
-              ...lead,
-              workspace: {
-                ...lead.workspace,
-                outreachStatus: bulkOutreachStatus,
-                attemptCount:
-                  bulkOutreachStatus === "not_contacted"
-                    ? lead.workspace.attemptCount
-                    : Math.max(lead.workspace.attemptCount, 1),
-                lastContactedAt:
-                  bulkOutreachStatus === "not_contacted"
-                    ? lead.workspace.lastContactedAt
-                    : lead.workspace.lastContactedAt || new Date().toISOString().slice(0, 10),
-              },
-              updatedAt: new Date().toISOString(),
-            }
-          : lead
-      )
+      leads.map((lead) => {
+        if (!selectedLeadIds.includes(lead.id)) return lead
+
+        const workspace = {
+          ...lead.workspace,
+          outreachStatus: bulkOutreachStatus,
+          attemptCount:
+            bulkOutreachStatus === "not_contacted"
+              ? lead.workspace.attemptCount
+              : Math.max(lead.workspace.attemptCount, 1),
+          lastContactedAt:
+            bulkOutreachStatus === "not_contacted"
+              ? lead.workspace.lastContactedAt
+              : lead.workspace.lastContactedAt || new Date().toISOString().slice(0, 10),
+        }
+        updates.push({ leadId: lead.id, workspace })
+
+        return {
+          ...lead,
+          workspace,
+          updatedAt: new Date().toISOString(),
+        }
+      })
     )
+    void Promise.all(
+      updates.map((update) =>
+        persistLeadWorkspace(update.leadId, update.workspace, { refresh: false })
+      )
+    ).then(() => {
+      void loadSavedProjects()
+      void loadDashboardAnalytics()
+    })
     setSelectedLeadIds([])
-  }, [bulkOutreachStatus, selectedLeadIds, updateProjectLeads])
+  }, [
+    bulkOutreachStatus,
+    loadDashboardAnalytics,
+    loadSavedProjects,
+    persistLeadWorkspace,
+    selectedLeadIds,
+    updateProjectLeads,
+  ])
 
   const exportRowsForMode = useCallback(
     (mode: ExportMode) => {
@@ -2444,6 +2516,8 @@ export function CleanlyWorkspacePage({
           {activeTab !== "enrich" &&
           activeTab !== "files" &&
           activeTab !== "leads" &&
+          activeTab !== "dashboard" &&
+          activeTab !== "settings" &&
           !hasProject ? (
             <SavedFilePrompt
               title="Select a saved file"

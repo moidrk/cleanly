@@ -91,6 +91,8 @@ export interface ProjectSummary {
   createdAt: string
 }
 
+export type LeadWorkspacePatch = Partial<WorkspaceFields>
+
 const enrichmentStatusToDb: Record<ClientEnrichmentStatus, EnrichmentStatus> = {
   not_enriched: EnrichmentStatus.NOT_ENRICHED,
   enriched: EnrichmentStatus.ENRICHED,
@@ -226,6 +228,46 @@ function normalizeEnrichedFields(value: unknown): EnrichedNpiFields {
       ])
     ),
   }
+}
+
+function normalizeWorkspacePatch(value: unknown): LeadWorkspacePatch {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
+
+  const patch = value as Record<string, unknown>
+  const normalized: LeadWorkspacePatch = {}
+
+  if (typeof patch.status === "string") {
+    normalized.status = patch.status as WorkspaceFields["status"]
+  }
+  if (typeof patch.enrichmentStatus === "string") {
+    normalized.enrichmentStatus = patch.enrichmentStatus as ClientEnrichmentStatus
+  }
+  if (typeof patch.outreachStatus === "string") {
+    normalized.outreachStatus = patch.outreachStatus as ClientOutreachStatus
+  }
+  if (typeof patch.responseStatus === "string") {
+    normalized.responseStatus = patch.responseStatus as ClientResponseStatus
+  }
+  if (typeof patch.attemptCount === "number") {
+    normalized.attemptCount = patch.attemptCount
+  }
+  if (typeof patch.lastContactedAt === "string") {
+    normalized.lastContactedAt = patch.lastContactedAt
+  }
+  if (typeof patch.nextFollowUpAt === "string") {
+    normalized.nextFollowUpAt = patch.nextFollowUpAt
+  }
+  if (typeof patch.notes === "string") {
+    normalized.notes = patch.notes
+  }
+  if (typeof patch.tags === "string") {
+    normalized.tags = patch.tags
+  }
+  if (typeof patch.owner === "string") {
+    normalized.owner = patch.owner
+  }
+
+  return normalized
 }
 
 function workspaceFromJson(
@@ -484,4 +526,80 @@ export async function deleteProjectSnapshot(projectId: string) {
   await prisma.project.delete({
     where: { id: projectId },
   })
+}
+
+export async function updateLeadWorkspace(
+  projectId: string,
+  leadId: string,
+  patchValue: unknown
+) {
+  const prisma = getPrisma()
+  const patch = normalizeWorkspacePatch(patchValue)
+  const existing = await prisma.lead.findFirst({
+    where: {
+      id: leadId,
+      projectId,
+    },
+  })
+
+  if (!existing) return null
+
+  const existingEnrichmentData =
+    existing.enrichmentData &&
+    typeof existing.enrichmentData === "object" &&
+    !Array.isArray(existing.enrichmentData)
+      ? (existing.enrichmentData as Record<string, unknown>)
+      : {}
+  const workspace = workspaceFromJson(existingEnrichmentData, {
+    enrichmentStatus: enrichmentStatusFromDb[existing.enrichmentStatus],
+    cleanlyStatus: fromCleanlyStatus(existing.cleanlyStatus),
+    outreachStatus: outreachStatusFromDb[existing.outreachStatus],
+    responseStatus: responseStatusFromDb[existing.responseStatus],
+    attemptCount: existing.attemptCount,
+    lastContactedAt: existing.lastContactedAt?.toISOString().slice(0, 10) ?? "",
+    nextFollowUpAt: existing.nextFollowUpAt?.toISOString().slice(0, 10) ?? "",
+    notes: existing.notes,
+  })
+  const nextWorkspace: WorkspaceFields = {
+    ...workspace,
+    ...patch,
+  }
+
+  if (
+    patch.outreachStatus &&
+    patch.outreachStatus !== "not_contacted" &&
+    nextWorkspace.attemptCount < 1
+  ) {
+    nextWorkspace.attemptCount = 1
+  }
+
+  const nextEnrichmentData = {
+    ...existingEnrichmentData,
+    workspace: nextWorkspace,
+  } as unknown as Prisma.InputJsonValue
+
+  await prisma.$transaction([
+    prisma.lead.update({
+      where: { id: leadId },
+      data: {
+        enrichmentData: nextEnrichmentData,
+        enrichmentStatus: enrichmentStatusToDb[nextWorkspace.enrichmentStatus],
+        cleanlyStatus: toCleanlyStatus(nextWorkspace.status),
+        outreachStatus: outreachStatusToDb[nextWorkspace.outreachStatus],
+        responseStatus: responseStatusToDb[nextWorkspace.responseStatus],
+        attemptCount: nextWorkspace.attemptCount,
+        lastContactedAt: toDate(nextWorkspace.lastContactedAt),
+        nextFollowUpAt: toDate(nextWorkspace.nextFollowUpAt),
+        notes: nextWorkspace.notes,
+      },
+    }),
+    prisma.project.update({
+      where: { id: projectId },
+      data: {
+        updatedAt: new Date(),
+      },
+    }),
+  ])
+
+  return getProjectSnapshot(projectId)
 }
