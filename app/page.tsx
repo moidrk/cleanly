@@ -687,9 +687,17 @@ function formatUploadDay(value: string) {
 function getWeekLabel(value: string) {
   if (!value) return "Unassigned"
 
-  const weekStart = parseWeekKey(value) ?? startOfWeek(new Date(value), {
-    weekStartsOn: WEEK_STARTS_ON,
-  })
+  const parsedDate = new Date(value)
+  const weekStart =
+    parseWeekKey(value) ??
+    (Number.isNaN(parsedDate.getTime())
+      ? null
+      : startOfWeek(parsedDate, {
+          weekStartsOn: WEEK_STARTS_ON,
+        }))
+
+  if (!weekStart) return "Unassigned"
+
   const weekEnd = endOfWeek(weekStart, { weekStartsOn: WEEK_STARTS_ON })
 
   return `${format(weekStart, "MMM d")} - ${format(weekEnd, "MMM d, yyyy")}`
