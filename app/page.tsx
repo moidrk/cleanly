@@ -1198,6 +1198,7 @@ export function CleanlyWorkspacePage({
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const hasSyncedLeadViewFromUrl = useRef(false)
+  const suppressUrlProjectReloadRef = useRef(false)
   const currentProjectId = project?.id ?? ""
   const selectedFileIdFromUrl = searchParams.get("fileId") ?? ""
   const selectedViewFromUrl = searchParams.get("view")
@@ -1254,6 +1255,7 @@ export function CleanlyWorkspacePage({
 
   const clearCurrentProjectSelection = useCallback(
     (tab: TabKey = activeTab) => {
+      suppressUrlProjectReloadRef.current = true
       setProject(null)
       setSelectedLeadId("")
       setSelectedLeadIds([])
@@ -1392,12 +1394,15 @@ export function CleanlyWorkspacePage({
     async (projectId: string, tab: TabKey) => {
       if (!projectId) return
 
-      await loadProjectFromDatabase(projectId)
+      if (project?.id !== projectId) {
+        setProject(null)
+        setSelectedLeadId("")
+      }
       goToTab(tab, projectId)
       setSelectedLeadIds([])
       setLeadPage(1)
     },
-    [goToTab, loadProjectFromDatabase]
+    [goToTab, project?.id]
   )
 
   const persistProjectSnapshot = useCallback(
@@ -1710,7 +1715,12 @@ export function CleanlyWorkspacePage({
   }, [loadActivityLogs, loadDashboardAnalytics, loadSavedProjects])
 
   useEffect(() => {
-    if (!selectedFileIdFromUrl) return
+    if (!selectedFileIdFromUrl) {
+      suppressUrlProjectReloadRef.current = false
+      return
+    }
+
+    if (suppressUrlProjectReloadRef.current) return
     if (project?.id === selectedFileIdFromUrl) return
     if (isLoadingProject) return
 
@@ -3208,6 +3218,26 @@ export function CleanlyWorkspacePage({
                     </tr>
                   </thead>
                   <tbody>
+                    {databaseState === "checking" && savedProjects.length === 0
+                      ? Array.from({ length: 5 }).map((_, index) => (
+                          <tr key={`files-skeleton-${index}`} className="border-b border-border/80">
+                            <td className="px-4 py-3"><SkeletonBox className="h-4 w-40" /></td>
+                            <td className="px-4 py-3"><SkeletonBox className="h-4 w-56" /></td>
+                            <td className="px-4 py-3"><SkeletonBox className="h-4 w-24" /></td>
+                            <td className="px-4 py-3"><SkeletonBox className="h-4 w-20" /></td>
+                            <td className="px-4 py-3"><SkeletonBox className="h-4 w-32" /></td>
+                            <td className="px-4 py-3"><SkeletonBox className="h-4 w-12" /></td>
+                            <td className="px-4 py-3"><SkeletonBox className="h-6 w-24 rounded-full" /></td>
+                            <td className="px-4 py-3">
+                              <div className="flex gap-2">
+                                <SkeletonBox className="h-10 w-10" />
+                                <SkeletonBox className="h-10 w-10" />
+                                <SkeletonBox className="h-10 w-10" />
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      : null}
                     {savedProjects.map((savedProject) => (
                       <tr key={savedProject.id} className="border-b border-border/80">
                         <td className="max-w-72 px-4 py-3 font-medium">
@@ -3262,7 +3292,7 @@ export function CleanlyWorkspacePage({
                         </td>
                       </tr>
                     ))}
-                    {savedProjects.length === 0 ? (
+                    {savedProjects.length === 0 && databaseState !== "checking" ? (
                       <tr>
                         <td
                           colSpan={8}
@@ -3287,7 +3317,7 @@ export function CleanlyWorkspacePage({
                       Weekly Workflow
                     </p>
                     <p className="mt-2 text-2xl font-medium tracking-[-0.04em]">
-                      Drag files into the right operating week
+                      Assign files into their operating weeks
                     </p>
                     <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
                       Drop a file onto any week to save immediately. Drop it back
@@ -3437,7 +3467,41 @@ export function CleanlyWorkspacePage({
               </motion.section>
 
               <section className="grid gap-7">
-                {visibleWeekGroups.map((group) => (
+                {databaseState === "checking" && savedProjects.length === 0 ? (
+                  <div className="grid gap-7">
+                    {Array.from({ length: 2 }).map((_, monthIndex) => (
+                      <div key={`weekly-skeleton-${monthIndex}`} className="min-w-0">
+                        <div className="mb-3 flex items-center justify-between gap-4">
+                          <SkeletonBox className="h-4 w-32" />
+                          <SkeletonBox className="h-4 w-16" />
+                        </div>
+                        <div className="flex min-w-0 gap-3 overflow-x-auto pb-3">
+                          {Array.from({ length: 4 }).map((__, weekIndex) => (
+                            <div
+                              key={weekIndex}
+                              className="flex min-h-80 w-[20.5rem] shrink-0 flex-col border border-border bg-background"
+                            >
+                              <div className="border-b border-border p-4">
+                                <SkeletonBox className="h-4 w-20" />
+                                <SkeletonBox className="mt-2 h-3 w-32" />
+                                <div className="mt-4 grid grid-cols-2 gap-2">
+                                  <SkeletonBox className="h-12 w-full" />
+                                  <SkeletonBox className="h-12 w-full" />
+                                </div>
+                              </div>
+                              <div className="grid flex-1 content-start gap-2 p-3">
+                                <SkeletonBox className="h-20 w-full" />
+                                <SkeletonBox className="h-20 w-full" />
+                                <SkeletonBox className="h-20 w-full border border-dashed border-border bg-transparent" />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {!(databaseState === "checking" && savedProjects.length === 0) ? visibleWeekGroups.map((group) => (
                   <motion.div layout key={group.month} className="min-w-0">
                     <div className="mb-3 flex items-center justify-between gap-4">
                       <p className="text-[0.72rem] font-medium tracking-[0.2em] text-muted-foreground uppercase">
@@ -3541,7 +3605,7 @@ export function CleanlyWorkspacePage({
                       })}
                     </div>
                   </motion.div>
-                ))}
+                )) : null}
               </section>
 
               {hiddenWorkflowMonthCount > 0 ? (
@@ -3616,7 +3680,6 @@ export function CleanlyWorkspacePage({
           {activeTab === "settings" ? (
             <SettingsView
               databaseState={databaseState}
-              project={project}
               resolvedTheme={resolvedTheme ?? "system"}
               theme={theme ?? "system"}
               onThemeChange={setTheme}
@@ -3695,14 +3758,6 @@ export function CleanlyWorkspacePage({
                   >
                     <Download />
                     Export CSV
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => void loadSavedProjects()}
-                    disabled={databaseState === "checking"}
-                  >
-                    <RefreshCcw />
-                    Refresh
                   </Button>
                   <Button variant="outline" onClick={() => goToTab("files")}>
                     <FileSpreadsheet />
@@ -4651,6 +4706,145 @@ function AppToastStack({ toasts }: { toasts: AppToast[] }) {
   )
 }
 
+function SkeletonBox({
+  className = "",
+}: {
+  className?: string
+}) {
+  return <div className={`animate-pulse bg-muted/70 ${className}`.trim()} />
+}
+
+function SkeletonTextRows({
+  rows = 3,
+}: {
+  rows?: number
+}) {
+  return (
+    <div className="grid gap-2">
+      {Array.from({ length: rows }).map((_, index) => (
+        <SkeletonBox
+          key={index}
+          className={index === rows - 1 ? "h-3 w-2/3" : "h-3 w-full"}
+        />
+      ))}
+    </div>
+  )
+}
+
+function DashboardLoadingState() {
+  return (
+    <div className="grid gap-4">
+      <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_14rem]">
+        <div className="grid gap-4">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {Array.from({ length: 8 }).map((_, index) => (
+              <div key={index} className="border border-border bg-background p-4">
+                <SkeletonBox className="h-3 w-24" />
+                <SkeletonBox className="mt-4 h-8 w-20" />
+                <SkeletonBox className="mt-3 h-3 w-28" />
+              </div>
+            ))}
+          </div>
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+            <div className="border border-border bg-background p-4">
+              <SkeletonBox className="h-4 w-40" />
+              <SkeletonBox className="mt-2 h-3 w-56" />
+              <SkeletonBox className="mt-6 h-[18rem] w-full" />
+            </div>
+            <div className="border border-border bg-background p-4">
+              <SkeletonBox className="h-4 w-40" />
+              <SkeletonBox className="mt-2 h-3 w-44" />
+              <SkeletonBox className="mt-6 h-[18rem] w-full" />
+            </div>
+          </div>
+        </div>
+        <div className="grid gap-4">
+          <div className="border border-border bg-background p-4">
+            <SkeletonBox className="h-4 w-32" />
+            <SkeletonBox className="mt-2 h-3 w-40" />
+            <SkeletonBox className="mt-6 h-[14rem] w-full" />
+          </div>
+          <div className="border border-border bg-background p-4">
+            <SkeletonBox className="h-4 w-32" />
+            <SkeletonBox className="mt-2 h-3 w-48" />
+            <div className="mt-5 grid gap-2">
+              {Array.from({ length: 5 }).map((_, index) => (
+                <SkeletonBox key={index} className="h-10 w-full" />
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+      <section className="grid gap-4 2xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <div className="border border-border bg-background p-4">
+          <SkeletonBox className="h-4 w-40" />
+          <SkeletonBox className="mt-2 h-3 w-52" />
+          <SkeletonBox className="mt-6 h-[20rem] w-full" />
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="border border-border bg-background p-4">
+              <SkeletonBox className="h-4 w-32" />
+              <SkeletonBox className="mt-2 h-3 w-44" />
+              <div className="mt-5 grid gap-3">
+                {Array.from({ length: 4 }).map((__, rowIndex) => (
+                  <SkeletonBox key={rowIndex} className="h-10 w-full" />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function LogsLoadingState() {
+  return (
+    <section className="border border-border bg-background">
+      <div className="grid border-b border-border px-4 py-3 text-[0.68rem] tracking-[0.18em] text-muted-foreground uppercase md:grid-cols-[10rem_minmax(0,1fr)_12rem_10rem]">
+        <span>Time</span>
+        <span>Action</span>
+        <span>Actor</span>
+        <span>Entity</span>
+      </div>
+      <div className="grid">
+        {Array.from({ length: 6 }).map((_, index) => (
+          <div
+            key={index}
+            className="grid min-w-0 gap-3 border-b border-border px-4 py-3 last:border-b-0 md:grid-cols-[10rem_minmax(0,1fr)_12rem_10rem] md:items-center"
+          >
+            <SkeletonBox className="h-3 w-24" />
+            <SkeletonTextRows rows={2} />
+            <SkeletonBox className="h-6 w-32 rounded-full" />
+            <SkeletonBox className="h-6 w-20 rounded-full" />
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function SavedFilePromptLoadingState() {
+  return (
+    <div className="mt-4 grid gap-3">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <div
+          key={index}
+          className="grid min-w-0 gap-3 border border-border p-3 md:grid-cols-[minmax(0,1fr)_11rem_7rem]"
+        >
+          <div className="min-w-0">
+            <SkeletonBox className="h-4 w-40" />
+            <SkeletonBox className="mt-2 h-3 w-56" />
+          </div>
+          <SkeletonBox className="h-4 w-28" />
+          <SkeletonBox className="h-4 w-16" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function InfoLine({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex min-w-0 items-baseline justify-between gap-3 border-b border-border pb-2 last:border-b-0 last:pb-0">
@@ -4841,6 +5035,10 @@ function DashboardAnalyticsView({
   onRefresh: () => void
   onImport: () => void
 }) {
+  if (isLoading) {
+    return <DashboardLoadingState />
+  }
+
   const hasData = dashboard.totals.files > 0 || dashboard.totals.totalLeads > 0
   const enrichmentPercent = getPercent(
     dashboard.totals.enrichedLeads,
@@ -5485,13 +5683,11 @@ function DashboardFilesReviewCard({
 
 function SettingsView({
   databaseState,
-  project,
   resolvedTheme,
   theme,
   onThemeChange,
 }: {
   databaseState: "checking" | "available" | "unavailable"
-  project: LeadProject | null
   resolvedTheme: string
   theme: string
   onThemeChange: (theme: string) => void
@@ -5690,7 +5886,7 @@ function ActivityLogsView({
         ) : null}
       </section>
 
-      <section className="border border-border bg-background">
+      {isLoading ? <LogsLoadingState /> : <section className="border border-border bg-background">
         <div className="grid border-b border-border px-4 py-3 text-[0.68rem] tracking-[0.18em] text-muted-foreground uppercase md:grid-cols-[10rem_minmax(0,1fr)_12rem_10rem]">
           <span>Time</span>
           <span>Action</span>
@@ -5724,7 +5920,7 @@ function ActivityLogsView({
             </div>
           ) : null}
         </div>
-      </section>
+      </section>}
 
       {selectedLog ? (
         <div className="fixed inset-0 z-50 grid place-items-center bg-background/80 px-4 backdrop-blur-sm">
@@ -6022,6 +6218,7 @@ function SavedFilePrompt({
         </div>
       </div>
       <div className="mt-4 grid gap-3">
+        {databaseState === "checking" || isLoadingProject ? <SavedFilePromptLoadingState /> : null}
         {savedProjects.map((savedProject) => (
           <button
             key={savedProject.id}
@@ -6045,7 +6242,7 @@ function SavedFilePrompt({
             <span className="text-sm">{formatStat(savedProject.rowCount)} rows</span>
           </button>
         ))}
-        {savedProjects.length === 0 ? (
+        {savedProjects.length === 0 && databaseState !== "checking" && !isLoadingProject ? (
           <div className="border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
             No saved files are available yet.
           </div>
@@ -6088,6 +6285,9 @@ function ProjectResolvingState({
       <div className="mt-4 flex items-center gap-3 border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
         <LoaderCircle className="size-4 animate-spin" />
         Opening the requested workspace file...
+      </div>
+      <div className="mt-4 grid gap-3">
+        <SavedFilePromptLoadingState />
       </div>
     </section>
   )
