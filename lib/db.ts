@@ -12,7 +12,9 @@ function createPrismaClient() {
   if (!connectionString) {
     throw new Error("DATABASE_URL is required to initialize Prisma.")
   }
-const pool = new Pool({ connectionString })
+const pool = new Pool({ connectionString,ssl: {
+      rejectUnauthorized: false
+    } })
   
   // 2. Pass the pool to the adapter
   const adapter = new PrismaPg(pool)  
