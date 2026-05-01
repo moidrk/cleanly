@@ -190,23 +190,6 @@ function getLeadEmail(row: CsvRow) {
   return entry?.[1] ?? ""
 }
 
-function getUploadWeek(dateValue: string) {
-  if (!dateValue) return "unassigned"
-
-  const date = new Date(dateValue)
-  if (Number.isNaN(date.getTime())) return "unassigned"
-
-  const year = date.getFullYear()
-  const start = new Date(Date.UTC(year, 0, 1))
-  const dayOffset = Math.floor(
-    (Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) -
-      start.getTime()) /
-      86400000
-  )
-  const week = Math.ceil((dayOffset + start.getUTCDay() + 1) / 7)
-  return `${year}-W${String(week).padStart(2, "0")}`
-}
-
 function normalizeSelectedFields(value: unknown): EnrichFieldKey[] {
   if (!Array.isArray(value)) return []
 
@@ -465,7 +448,7 @@ export async function saveProjectSnapshot(
         displayName: snapshot.name,
         fileType: "csv",
         uploadDate,
-        uploadWeek: snapshot.assignedWeek || getUploadWeek(snapshot.createdAt),
+        uploadWeek: snapshot.assignedWeek || "unassigned",
         uploadedBy: "",
         rowCount: snapshot.leads.length,
         status: LeadFileStatus.IMPORTED,

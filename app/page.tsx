@@ -1300,8 +1300,7 @@ export function CleanlyWorkspacePage({
       const leads = withCleaningAnalysis(payload.project.leads)
       setProject({
         ...payload.project,
-        assignedWeek:
-          payload.project.assignedWeek || getWeekKey(new Date(payload.project.createdAt)),
+        assignedWeek: payload.project.assignedWeek || "unassigned",
         leads,
       })
       setSelectedLeadId(leads[0]?.id ?? "")
@@ -1449,8 +1448,7 @@ export function CleanlyWorkspacePage({
         const leads = withCleaningAnalysis(payload.project.leads)
         setProject({
           ...payload.project,
-          assignedWeek:
-            payload.project.assignedWeek || getWeekKey(new Date(payload.project.createdAt)),
+          assignedWeek: payload.project.assignedWeek || "unassigned",
           leads,
         })
         setLastSavedAt(payload.project.updatedAt)
@@ -1999,7 +1997,7 @@ export function CleanlyWorkspacePage({
       id: pendingImport.id,
       name: pendingImport.name,
       fileName: pendingImport.fileName,
-      assignedWeek: getWeekKey(new Date()),
+      assignedWeek: "unassigned",
       headers: pendingImport.headers,
       selectedNpiColumn: pendingImport.selectedNpiColumn,
       selectedFields: pendingImport.selectedFields,
@@ -2223,9 +2221,7 @@ export function CleanlyWorkspacePage({
           const leads = withCleaningAnalysis(payload.project.leads)
           setProject({
             ...payload.project,
-            assignedWeek:
-              payload.project.assignedWeek ||
-              getWeekKey(new Date(payload.project.createdAt)),
+            assignedWeek: payload.project.assignedWeek || "unassigned",
             leads,
           })
         }
