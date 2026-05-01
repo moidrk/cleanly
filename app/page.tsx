@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useTheme } from "next-themes"
-import type { ChangeEvent, DragEvent } from "react"
+import type { ChangeEvent, ComponentType, DragEvent } from "react"
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   addWeeks,
@@ -31,6 +31,7 @@ import {
   Download,
   FileSpreadsheet,
   Filter,
+  FolderOpen,
   FolderKanban,
   History,
   LoaderCircle,
@@ -40,6 +41,7 @@ import {
   Search,
   Settings2,
   Table2,
+  Trash2,
   Upload,
   Workflow,
   X,
@@ -1152,6 +1154,7 @@ export function CleanlyWorkspacePage({
   const [showFullYearWorkflow, setShowFullYearWorkflow] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const hasSyncedLeadViewFromUrl = useRef(false)
   const currentProjectId = project?.id ?? ""
   const selectedFileIdFromUrl = searchParams.get("fileId") ?? ""
   const selectedViewFromUrl = searchParams.get("view")
@@ -1168,7 +1171,11 @@ export function CleanlyWorkspacePage({
       if (tab === "leads") {
         const nextView =
           extraParams?.view ??
-          (isViewKey(selectedViewFromUrl) ? selectedViewFromUrl : activeView)
+          (activeTab === "leads"
+            ? isViewKey(selectedViewFromUrl)
+              ? selectedViewFromUrl
+              : activeView
+            : "")
 
         if (nextView && nextView !== "all") {
           href.searchParams.set("view", nextView)
@@ -1191,7 +1198,7 @@ export function CleanlyWorkspacePage({
 
       return `${href.pathname}${href.search}`
     },
-    [activeView, currentProjectId, selectedViewFromUrl]
+    [activeTab, activeView, currentProjectId, selectedViewFromUrl]
   )
 
   const goToTab = useCallback(
@@ -1629,20 +1636,34 @@ export function CleanlyWorkspacePage({
   }, [isLoadingProject, loadProjectFromDatabase, project?.id, selectedFileIdFromUrl])
 
   useEffect(() => {
+    if (activeTab === "leads") return
+    hasSyncedLeadViewFromUrl.current = false
+  }, [activeTab])
+
+  useEffect(() => {
     if (activeTab !== "leads") return
 
     const nextView = isViewKey(selectedViewFromUrl) ? selectedViewFromUrl : "all"
+    const timeoutId = window.setTimeout(() => {
+      setActiveView(nextView)
+      setLeadPage(1)
+      setSelectedLeadIds([])
+      hasSyncedLeadViewFromUrl.current = true
+    }, 0)
 
-    if (activeView !== nextView) {
-      const timeoutId = window.setTimeout(() => {
-        setActiveView(nextView)
-        setLeadPage(1)
-        setSelectedLeadIds([])
-      }, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [activeTab, selectedViewFromUrl])
 
-      return () => window.clearTimeout(timeoutId)
-    }
-  }, [activeTab, activeView, selectedViewFromUrl])
+  useEffect(() => {
+    if (activeTab !== "leads") return
+    if (!hasSyncedLeadViewFromUrl.current) return
+
+    const currentUrlView = isViewKey(selectedViewFromUrl) ? selectedViewFromUrl : "all"
+    if (currentUrlView === activeView) return
+
+    const nextHref = getTabHref("leads", undefined, { view: activeView })
+    router.replace(nextHref)
+  }, [activeTab, activeView, getTabHref, router, selectedViewFromUrl])
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -1986,8 +2007,8 @@ export function CleanlyWorkspacePage({
           )
         )
 
-        updateProjectLeads((leads) =>
-          leads.map((lead) => {
+        const updatedLeads = withCleaningAnalysis(
+          project.leads.map((lead) => {
             const update = leadUpdates.get(lead.id)
             if (!update) return lead
 
@@ -2001,6 +2022,17 @@ export function CleanlyWorkspacePage({
             })
           })
         )
+
+        const updatedProject: LeadProject = {
+          ...project,
+          leads: updatedLeads,
+          updatedAt: new Date().toISOString(),
+        }
+
+        setProject(updatedProject)
+        await persistProjectSnapshot(updatedProject, {
+          successMessage: "Enrichment saved to workspace.",
+        })
       } catch {
         setErrorMessage("The enrichment run ended unexpectedly. Please try again.")
       } finally {
@@ -2011,7 +2043,7 @@ export function CleanlyWorkspacePage({
         })
       }
     },
-    [project, updateProjectLeads]
+    [persistProjectSnapshot, project]
   )
 
   const persistLeadWorkspace = useCallback(
@@ -3091,34 +3123,32 @@ export function CleanlyWorkspacePage({
                           <StatusPill label={savedProject.status} tone="info" />
                         </td>
                         <td className="px-4 py-3">
-                      <div className="flex min-w-max flex-wrap gap-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
+                          <div className="flex min-w-max flex-wrap gap-2">
+                            <ActionIconButton
+                              icon={FolderOpen}
+                              label="Open"
+                              tone="info"
                               onClick={() =>
                                 void openSavedProjectInTab(savedProject.id, "workspace")
                               }
                               disabled={isLoadingProject}
-                            >
-                              Open
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={async () => {
-                                await loadProjectFromDatabase(savedProject.id)
-                                goToTab("weekly")
+                            />
+                            <ActionIconButton
+                              icon={CalendarDays}
+                              label="Assign Week"
+                              tone="warning"
+                              onClick={() => {
+                                void loadProjectFromDatabase(savedProject.id).then(() => {
+                                  goToTab("weekly", savedProject.id)
+                                })
                               }}
-                            >
-                              Assign Week
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
+                            />
+                            <ActionIconButton
+                              icon={Trash2}
+                              label="Delete"
+                              tone="destructive"
                               onClick={() => void deleteProjectFromDatabase(savedProject.id)}
-                            >
-                              Delete
-                            </Button>
+                            />
                           </div>
                         </td>
                       </tr>
@@ -4371,6 +4401,43 @@ function TruncatedText({
     >
       {value}
     </span>
+  )
+}
+
+function ActionIconButton({
+  icon: Icon,
+  label,
+  tone,
+  onClick,
+  disabled = false,
+}: {
+  icon: ComponentType<{ className?: string }>
+  label: string
+  tone: "neutral" | "info" | "warning" | "destructive"
+  onClick: () => void
+  disabled?: boolean
+}) {
+  const toneClass =
+    tone === "info"
+      ? "text-sky-700 hover:border-sky-300 hover:bg-sky-50 dark:text-sky-300 dark:hover:border-sky-800 dark:hover:bg-sky-950/30"
+      : tone === "warning"
+        ? "text-amber-700 hover:border-amber-300 hover:bg-amber-50 dark:text-amber-300 dark:hover:border-amber-800 dark:hover:bg-amber-950/30"
+        : tone === "destructive"
+          ? "text-red-700 hover:border-red-300 hover:bg-red-50 dark:text-red-300 dark:hover:border-red-800 dark:hover:bg-red-950/30"
+          : "text-foreground hover:border-foreground hover:bg-muted"
+
+  return (
+    <Button
+      size="icon"
+      variant="outline"
+      title={label}
+      aria-label={label}
+      onClick={onClick}
+      disabled={disabled}
+      className={toneClass}
+    >
+      <Icon className="size-4" />
+    </Button>
   )
 }
 
