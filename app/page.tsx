@@ -3053,8 +3053,7 @@ export function CleanlyWorkspacePage({
                         Open Lead Grid
                       </Button>
                       <Button
-                        variant="outline"
-                        onClick={() => clearCurrentProjectSelection("leads")}
+                        onClick={() => clearCurrentProjectSelection("workspace")}
                       >
                         <X />
                         Clear File
@@ -4991,7 +4990,7 @@ function DashboardAnalyticsView({
           <CardHeader>
             <CardTitle>No saved analytics yet</CardTitle>
             <CardDescription>
-              Import and save a CSV list to Postgres, then this dashboard will populate
+              Import and save a CSV list to system, then this dashboard will populate
               with cross-file operational charts.
             </CardDescription>
           </CardHeader>
@@ -5621,30 +5620,7 @@ function SettingsView({
         </div>
       </section>
 
-      <section className="border border-border bg-background p-4 xl:col-span-2">
-        <p className="text-[0.68rem] tracking-[0.2em] text-muted-foreground uppercase">
-          Current File Context
-        </p>
-        {project ? (
-          <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            <InfoLine label="Project" value={project.name} />
-            <InfoLine label="File" value={project.fileName} />
-            <InfoLine label="Assigned week" value={getWeekRangeLabel(project.assignedWeek)} />
-            <InfoLine label="Rows" value={formatStat(project.leads.length)} />
-            <InfoLine
-              label="Fields"
-              value={project.selectedFields
-                .map((fieldKey) => NPI_FIELD_DEFINITIONS[fieldKey].header)
-                .join(", ")}
-            />
-            <InfoLine label="Updated" value={formatDateTime(project.updatedAt)} />
-          </div>
-        ) : (
-          <div className="mt-4 border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-            No file is currently selected. Settings still apply globally.
-          </div>
-        )}
-      </section>
+     
     </div>
   )
 }
