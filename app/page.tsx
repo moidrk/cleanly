@@ -579,6 +579,8 @@ const TAB_ROUTES: Record<TabKey, string> = {
   logs: "/logs",
 }
 
+const FILE_CONTEXT_TABS = new Set<TabKey>(["workspace", "leads", "weekly"])
+
 const TAB_ICONS: Record<TabKey, React.ComponentType<{ className?: string }>> = {
   enrich: Upload,
   workspace: FolderKanban,
@@ -1206,7 +1208,8 @@ export function CleanlyWorkspacePage({
 
   const getTabHref = useCallback(
     (tab: TabKey, projectId?: string, extraParams?: Record<string, string>) => {
-      const nextProjectId = projectId ?? currentProjectId
+      const nextProjectId =
+        projectId ?? (FILE_CONTEXT_TABS.has(tab) ? currentProjectId : "")
       const href = new URL(TAB_ROUTES[tab], "http://localhost")
 
       if (nextProjectId) {
@@ -1715,6 +1718,11 @@ export function CleanlyWorkspacePage({
   }, [loadActivityLogs, loadDashboardAnalytics, loadSavedProjects])
 
   useEffect(() => {
+    if (activeTab === "enrich") {
+      suppressUrlProjectReloadRef.current = false
+      return
+    }
+
     if (!selectedFileIdFromUrl) {
       suppressUrlProjectReloadRef.current = false
       return
@@ -1729,7 +1737,13 @@ export function CleanlyWorkspacePage({
     }, 0)
 
     return () => window.clearTimeout(timeoutId)
-  }, [isLoadingProject, loadProjectFromDatabase, project?.id, selectedFileIdFromUrl])
+  }, [
+    activeTab,
+    isLoadingProject,
+    loadProjectFromDatabase,
+    project?.id,
+    selectedFileIdFromUrl,
+  ])
 
   useEffect(() => {
     if (activeTab !== "enrich" || !shouldOpenPickerFromUrl) return
@@ -1874,6 +1888,8 @@ export function CleanlyWorkspacePage({
         }
 
         const now = new Date().toISOString()
+        suppressUrlProjectReloadRef.current = true
+        setProject(null)
         setPendingImport({
           id: `project-${Date.now()}`,
           name: fileNameToProjectName(file.name),
@@ -1977,6 +1993,7 @@ export function CleanlyWorkspacePage({
       )
     )
     const now = new Date().toISOString()
+    suppressUrlProjectReloadRef.current = true
 
     setProject({
       id: pendingImport.id,
@@ -1994,7 +2011,11 @@ export function CleanlyWorkspacePage({
     setErrorMessage("")
     setSelectedLeadId(leads[0]?.id ?? "")
     setSelectedLeadIds([])
-  }, [pendingImport])
+
+    if (selectedFileIdFromUrl) {
+      router.replace(TAB_ROUTES.enrich)
+    }
+  }, [pendingImport, router, selectedFileIdFromUrl])
 
   const startEnrichment = useCallback(
     async (mode: "all_pending" | "retry_failed" = "all_pending") => {
