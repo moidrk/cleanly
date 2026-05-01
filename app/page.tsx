@@ -2,6 +2,7 @@
 
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
+import { useTheme } from "next-themes"
 import type { ChangeEvent, DragEvent } from "react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
@@ -1020,6 +1021,7 @@ export function CleanlyWorkspacePage({
 }) {
   const pathname = usePathname()
   const router = useRouter()
+  const { resolvedTheme, setTheme, theme } = useTheme()
   const activeTab = getTabFromPath(pathname) || initialTab
   const [project, setProject] = useState<LeadProject | null>(null)
   const [activeView, setActiveView] = useState<ViewKey>("all")
@@ -1059,7 +1061,6 @@ export function CleanlyWorkspacePage({
   const [singleLookupError, setSingleLookupError] = useState("")
   const [isSingleLookupLoading, setIsSingleLookupLoading] = useState(false)
   const [copyStatus, setCopyStatus] = useState("")
-  const [hydrated, setHydrated] = useState(false)
   const [databaseState, setDatabaseState] = useState<
     "checking" | "available" | "unavailable"
   >("checking")
@@ -1118,7 +1119,7 @@ export function CleanlyWorkspacePage({
     } finally {
       setIsLoadingProject(false)
     }
-  }, [goToTab])
+  }, [])
 
   const loadSavedProjects = useCallback(
     async ({ loadLatest = false }: { loadLatest?: boolean } = {}) => {
@@ -1361,7 +1362,6 @@ export function CleanlyWorkspacePage({
 
   useEffect(() => {
     queueMicrotask(() => {
-      setHydrated(true)
       void loadSavedProjects()
       void loadDashboardAnalytics()
     })
@@ -2902,47 +2902,14 @@ export function CleanlyWorkspacePage({
             />
           ) : null}
 
-          {activeTab === "settings" && hasProject ? (
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
-              <section className="border border-border bg-background p-4">
-                <p className="text-[0.68rem] tracking-[0.2em] text-muted-foreground uppercase">
-                  Settings
-                </p>
-                <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                  <div className="border border-border p-4">
-                    <p className="text-sm font-medium">Current decisions</p>
-                    <div className="mt-3 grid gap-2 text-sm text-muted-foreground">
-                      <InfoLine label="Package manager" value="npm (package-lock.json)" />
-                      <InfoLine label="Persistence today" value="Postgres when configured" />
-                      <InfoLine label="UI preferences" value="localStorage" />
-                      <InfoLine label="Route handler" value="/api/npi" />
-                    </div>
-                  </div>
-                  <div className="border border-border p-4">
-                    <p className="text-sm font-medium">Selected enrichment fields</p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {project!.selectedFields.map((fieldKey) => (
-                        <StatusPill
-                          key={fieldKey}
-                          label={NPI_FIELD_DEFINITIONS[fieldKey].header}
-                          tone="neutral"
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </section>
-              <PanelCard
-                eyebrow="Phase 2"
-                title="Persistence upgrade"
-                lines={[
-                  "Add Railway Postgres",
-                  "Choose ORM after inspection-driven schema design",
-                  "Expand saved file and lead APIs",
-                  "Replace remaining in-memory draft edits with server writes",
-                ]}
-              />
-            </div>
+          {activeTab === "settings" ? (
+            <SettingsView
+              databaseState={databaseState}
+              project={project}
+              resolvedTheme={resolvedTheme ?? "system"}
+              theme={theme ?? "system"}
+              onThemeChange={setTheme}
+            />
           ) : null}
 
           {activeTab === "leads" ? (
@@ -4653,6 +4620,184 @@ function DashboardFilesReviewCard({
   )
 }
 
+function SettingsView({
+  databaseState,
+  project,
+  resolvedTheme,
+  theme,
+  onThemeChange,
+}: {
+  databaseState: "checking" | "available" | "unavailable"
+  project: LeadProject | null
+  resolvedTheme: string
+  theme: string
+  onThemeChange: (theme: string) => void
+}) {
+  const themeOptions = [
+    {
+      value: "light",
+      label: "Day mode",
+      description: "Bright workspace for dense table work.",
+    },
+    {
+      value: "dark",
+      label: "Night mode",
+      description: "Low-glare mode for longer review sessions.",
+    },
+    {
+      value: "system",
+      label: "System",
+      description: "Follow your device appearance.",
+    },
+  ]
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_24rem]">
+      <section className="border border-border bg-background p-4">
+        <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <p className="text-[0.68rem] tracking-[0.2em] text-muted-foreground uppercase">
+              Settings
+            </p>
+            <h2 className="mt-2 text-2xl font-medium tracking-[-0.04em]">
+              Workspace controls
+            </h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+              Configure operator preferences, system defaults, and the admin-level
+              assumptions that keep this lead operations workspace predictable.
+            </p>
+          </div>
+          <StatusPill
+            label={`Theme: ${resolvedTheme}`}
+            tone={resolvedTheme === "dark" ? "info" : "neutral"}
+          />
+        </div>
+
+        <div className="mt-6 grid gap-4 lg:grid-cols-3">
+          {themeOptions.map((option) => {
+            const active = theme === option.value
+
+            return (
+              <button
+                key={option.value}
+                onClick={() => onThemeChange(option.value)}
+                className={[
+                  "min-w-0 border p-4 text-left transition-colors",
+                  active
+                    ? "border-foreground bg-foreground text-background"
+                    : "border-border bg-background hover:border-foreground hover:bg-muted",
+                ].join(" ")}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-medium">{option.label}</p>
+                  {active ? (
+                    <StatusPill label="Active" tone="success" />
+                  ) : (
+                    <span className="size-3 rounded-full border border-current opacity-50" />
+                  )}
+                </div>
+                <p
+                  className={[
+                    "mt-3 text-sm leading-6",
+                    active ? "text-background/75" : "text-muted-foreground",
+                  ].join(" ")}
+                >
+                  {option.description}
+                </p>
+              </button>
+            )
+          })}
+        </div>
+      </section>
+
+      <PanelCard
+        eyebrow="System"
+        title="Runtime status"
+        lines={[
+          `Database: ${databaseState}`,
+          "Package manager: npm",
+          "Persistence: Railway Postgres / DATABASE_URL",
+          "NPI route: /api/npi",
+          "Dashboard route: /api/dashboard",
+        ]}
+      />
+
+      <section className="border border-border bg-background p-4 xl:col-span-2">
+        <p className="text-[0.68rem] tracking-[0.2em] text-muted-foreground uppercase">
+          Admin Defaults
+        </p>
+        <div className="mt-4 grid gap-4 lg:grid-cols-3">
+          <SettingsCard
+            title="Lead operations"
+            lines={[
+              "Default page size: 25 rows",
+              "Column selection cap: 10 columns",
+              "Selection model: checkbox-only",
+              "Follow-up fields: date editable",
+            ]}
+          />
+          <SettingsCard
+            title="Enrichment"
+            lines={[
+              "Concurrency: 12 requests",
+              "Invalid NPIs never sent to CMS",
+              "Duplicates cached per run",
+              "CMS calls stay behind /api/npi",
+            ]}
+          />
+          <SettingsCard
+            title="Workspace data"
+            lines={[
+              "Business data: Postgres",
+              "UI preferences: local only",
+              "Original CSV: parsed rows, no bucket yet",
+              "Exports generated client-side",
+            ]}
+          />
+        </div>
+      </section>
+
+      <section className="border border-border bg-background p-4 xl:col-span-2">
+        <p className="text-[0.68rem] tracking-[0.2em] text-muted-foreground uppercase">
+          Current File Context
+        </p>
+        {project ? (
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            <InfoLine label="Project" value={project.name} />
+            <InfoLine label="File" value={project.fileName} />
+            <InfoLine label="Assigned week" value={getWeekRangeLabel(project.assignedWeek)} />
+            <InfoLine label="Rows" value={formatStat(project.leads.length)} />
+            <InfoLine
+              label="Fields"
+              value={project.selectedFields
+                .map((fieldKey) => NPI_FIELD_DEFINITIONS[fieldKey].header)
+                .join(", ")}
+            />
+            <InfoLine label="Updated" value={formatDateTime(project.updatedAt)} />
+          </div>
+        ) : (
+          <div className="mt-4 border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+            No file is currently selected. Settings still apply globally.
+          </div>
+        )}
+      </section>
+    </div>
+  )
+}
+
+function SettingsCard({ title, lines }: { title: string; lines: string[] }) {
+  return (
+    <div className="border border-border p-4">
+      <p className="text-sm font-medium">{title}</p>
+      <div className="mt-3 grid gap-2 text-sm text-muted-foreground">
+        {lines.map((line) => (
+          <p key={line}>{line}</p>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function getPercent(value: number, total: number) {
   if (!total) return 0
   return Math.round((value / total) * 100)
@@ -4758,8 +4903,8 @@ function TabButton({
       className={[
         "inline-flex items-center gap-2 border px-4 py-2 text-sm transition-colors",
         active
-          ? "border-foreground bg-foreground text-background [&_svg]:text-sky-200"
-          : "border-border bg-background text-foreground hover:border-foreground [&_svg]:text-white",
+          ? "border-foreground bg-foreground text-background [&_svg]:text-background"
+          : "border-border bg-background text-foreground hover:border-foreground [&_svg]:text-foreground",
       ].join(" ")}
     >
       <Icon className="size-4" />
