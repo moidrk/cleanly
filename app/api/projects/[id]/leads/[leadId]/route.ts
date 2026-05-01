@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 
+import { getAnonymousActor } from "@/lib/activity-db"
 import { updateLeadWorkspace } from "@/lib/workspace-db"
 
 interface RouteContext {
@@ -27,7 +28,12 @@ export async function PATCH(request: Request, context: RouteContext) {
   try {
     const { id, leadId } = await context.params
     const payload = (await request.json()) as { workspace?: unknown }
-    const project = await updateLeadWorkspace(id, leadId, payload.workspace)
+    const project = await updateLeadWorkspace(
+      id,
+      leadId,
+      payload.workspace,
+      getAnonymousActor(request)
+    )
 
     if (!project) {
       return NextResponse.json(

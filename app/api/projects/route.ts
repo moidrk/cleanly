@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 
+import { getAnonymousActor } from "@/lib/activity-db"
 import {
   listProjectSummaries,
   saveProjectSnapshot,
@@ -59,7 +60,7 @@ export async function POST(request: Request) {
       )
     }
 
-    const project = await saveProjectSnapshot(snapshot)
+    const project = await saveProjectSnapshot(snapshot, getAnonymousActor(request))
 
     return NextResponse.json({
       ok: true,

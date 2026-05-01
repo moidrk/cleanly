@@ -414,7 +414,10 @@ export async function getProjectSnapshot(projectId: string) {
   } satisfies LeadProjectSnapshot
 }
 
-export async function saveProjectSnapshot(snapshot: LeadProjectSnapshot) {
+export async function saveProjectSnapshot(
+  snapshot: LeadProjectSnapshot,
+  actor = "Operator System"
+) {
   const prisma = getPrisma()
   const now = new Date()
   const projectId = snapshot.id
@@ -510,6 +513,7 @@ export async function saveProjectSnapshot(snapshot: LeadProjectSnapshot) {
         entityType: ActivityEntityType.PROJECT,
         entityId: projectId,
         action: "project.snapshot_saved",
+        createdBy: actor,
         metadata: {
           fileName: snapshot.fileName,
           rowCount: snapshot.leads.length,
@@ -521,14 +525,48 @@ export async function saveProjectSnapshot(snapshot: LeadProjectSnapshot) {
   return getProjectSnapshot(projectId)
 }
 
-export async function deleteProjectSnapshot(projectId: string) {
+export async function deleteProjectSnapshot(
+  projectId: string,
+  actor = "Operator System"
+) {
   const prisma = getPrisma()
-  await prisma.project.delete({
+  const project = await prisma.project.findUnique({
     where: { id: projectId },
+    include: {
+      files: {
+        take: 1,
+      },
+      _count: {
+        select: { leads: true },
+      },
+    },
+  })
+
+  await prisma.$transaction(async (tx) => {
+      await tx.activityLog.create({
+        data: {
+          entityType: ActivityEntityType.PROJECT,
+          entityId: projectId,
+          action: "project.deleted",
+          createdBy: actor,
+          metadata: {
+            name: project?.name ?? projectId,
+            fileName: project?.files[0]?.originalFilename ?? "",
+            rowCount: project?._count.leads ?? 0,
+          },
+        },
+      })
+      await tx.project.delete({
+        where: { id: projectId },
+      })
   })
 }
 
-export async function updateProjectWeek(projectId: string, uploadWeek: string) {
+export async function updateProjectWeek(
+  projectId: string,
+  uploadWeek: string,
+  actor = "Operator System"
+) {
   const prisma = getPrisma()
   const nextWeek = uploadWeek || "unassigned"
 
@@ -550,6 +588,7 @@ export async function updateProjectWeek(projectId: string, uploadWeek: string) {
         entityType: ActivityEntityType.FILE,
         entityId: projectId,
         action: "file.week_assigned",
+        createdBy: actor,
         metadata: {
           uploadWeek: nextWeek,
         },
@@ -563,7 +602,8 @@ export async function updateProjectWeek(projectId: string, uploadWeek: string) {
 export async function updateLeadWorkspace(
   projectId: string,
   leadId: string,
-  patchValue: unknown
+  patchValue: unknown,
+  actor = "Operator System"
 ) {
   const prisma = getPrisma()
   const patch = normalizeWorkspacePatch(patchValue)
@@ -610,6 +650,8 @@ export async function updateLeadWorkspace(
     workspace: nextWorkspace,
   } as unknown as Prisma.InputJsonValue
 
+  const changedFields = Object.keys(patch)
+
   await prisma.$transaction([
     prisma.lead.update({
       where: { id: leadId },
@@ -629,6 +671,19 @@ export async function updateLeadWorkspace(
       where: { id: projectId },
       data: {
         updatedAt: new Date(),
+      },
+    }),
+    prisma.activityLog.create({
+      data: {
+        entityType: ActivityEntityType.LEAD,
+        entityId: leadId,
+        action: "lead.workspace_updated",
+        createdBy: actor,
+        metadata: {
+          projectId,
+          changedFields,
+          workspace: nextWorkspace,
+        } as unknown as Prisma.InputJsonValue,
       },
     }),
   ])

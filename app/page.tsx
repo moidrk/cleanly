@@ -32,6 +32,7 @@ import {
   FileSpreadsheet,
   Filter,
   FolderKanban,
+  History,
   LoaderCircle,
   PanelRight,
   RefreshCcw,
@@ -160,6 +161,7 @@ type TabKey =
   | "leads"
   | "dashboard"
   | "settings"
+  | "logs"
 
 interface WorkspaceFields {
   status: "active" | "needs_review" | "clean" | "archived"
@@ -307,6 +309,18 @@ interface DashboardAnalytics {
   topSpecialties: DashboardRankPoint[]
   followUpsDue: DashboardFollowUpPoint[]
   filesNeedingReview: DashboardFileReviewPoint[]
+}
+
+interface ActivityLogRecord {
+  id: string
+  entityType: string
+  entityId: string
+  action: string
+  actor: string
+  createdAt: string
+  title: string
+  description: string
+  metadata: Record<string, unknown>
 }
 
 type EnrichmentToast =
@@ -529,6 +543,7 @@ const TAB_LABELS: Record<TabKey, string> = {
   leads: "Leads",
   dashboard: "Dashboard",
   settings: "Settings",
+  logs: "Logs",
 }
 
 const TAB_ROUTES: Record<TabKey, string> = {
@@ -539,6 +554,7 @@ const TAB_ROUTES: Record<TabKey, string> = {
   leads: "/leads",
   dashboard: "/dashboard",
   settings: "/settings",
+  logs: "/logs",
 }
 
 const TAB_ICONS: Record<TabKey, React.ComponentType<{ className?: string }>> = {
@@ -549,6 +565,7 @@ const TAB_ICONS: Record<TabKey, React.ComponentType<{ className?: string }>> = {
   leads: Table2,
   dashboard: ChartNoAxesCombined,
   settings: Settings2,
+  logs: History,
 }
 
 const WEEKLY_WORKFLOW_START = new Date(2026, 2, 1)
@@ -1097,6 +1114,10 @@ export function CleanlyWorkspacePage({
     useState<DashboardAnalytics | null>(null)
   const [isDashboardLoading, setIsDashboardLoading] = useState(false)
   const [dashboardError, setDashboardError] = useState("")
+  const [activityLogs, setActivityLogs] = useState<ActivityLogRecord[]>([])
+  const [isLogsLoading, setIsLogsLoading] = useState(false)
+  const [logsError, setLogsError] = useState("")
+  const [selectedLogId, setSelectedLogId] = useState("")
   const [activeOutreachIndex, setActiveOutreachIndex] = useState(0)
   const [draggedProjectId, setDraggedProjectId] = useState("")
   const [weeklyDropTarget, setWeeklyDropTarget] = useState("")
@@ -1206,6 +1227,28 @@ export function CleanlyWorkspacePage({
     }
   }, [])
 
+  const loadActivityLogs = useCallback(async () => {
+    setIsLogsLoading(true)
+    setLogsError("")
+
+    try {
+      const response = await fetch("/api/logs", { cache: "no-store" })
+      const payload = (await response.json()) as {
+        ok: boolean
+        logs?: ActivityLogRecord[]
+        error?: string
+      }
+
+      setActivityLogs(payload.logs ?? [])
+      setLogsError(payload.ok ? "" : payload.error ?? "Unable to load logs.")
+    } catch {
+      setActivityLogs([])
+      setLogsError("Unable to reach the logs API.")
+    } finally {
+      setIsLogsLoading(false)
+    }
+  }, [])
+
   const openSavedProjectInTab = useCallback(
     async (projectId: string, tab: TabKey) => {
       if (!projectId) return
@@ -1256,12 +1299,13 @@ export function CleanlyWorkspacePage({
       setPersistenceMessage("Saved to workspace.")
       await loadSavedProjects()
       await loadDashboardAnalytics()
+      await loadActivityLogs()
     } catch {
       setPersistenceMessage("Unable to reach the project API.")
     } finally {
       setIsSavingProject(false)
     }
-  }, [databaseState, loadDashboardAnalytics, loadSavedProjects, project])
+  }, [databaseState, loadActivityLogs, loadDashboardAnalytics, loadSavedProjects, project])
 
   const assignProjectToWeek = useCallback(
     async (projectId: string, weekKey: string) => {
@@ -1311,6 +1355,7 @@ export function CleanlyWorkspacePage({
         if (!response.ok || !payload.ok) {
           setPersistenceMessage(payload.error ?? "Unable to update file week.")
           await loadSavedProjects()
+          await loadActivityLogs()
           return
         }
 
@@ -1329,16 +1374,18 @@ export function CleanlyWorkspacePage({
         )
         await loadSavedProjects()
         await loadDashboardAnalytics()
+        await loadActivityLogs()
       } catch {
         setPersistenceMessage("Unable to reach the workflow update API.")
         await loadSavedProjects()
+        await loadActivityLogs()
       } finally {
         window.setTimeout(() => {
           setRecentlyMovedProjectId("")
         }, 1600)
       }
     },
-    [currentProjectId, loadDashboardAnalytics, loadSavedProjects]
+    [currentProjectId, loadActivityLogs, loadDashboardAnalytics, loadSavedProjects]
   )
 
   const handleWorkflowDrop = useCallback(
@@ -1386,11 +1433,12 @@ export function CleanlyWorkspacePage({
         setPersistenceMessage("Project deleted.")
         await loadSavedProjects()
         await loadDashboardAnalytics()
+        await loadActivityLogs()
       } catch {
         setPersistenceMessage("Unable to reach the project API.")
       }
     },
-    [loadDashboardAnalytics, loadSavedProjects, project]
+    [loadActivityLogs, loadDashboardAnalytics, loadSavedProjects, project]
   )
 
   const selectedLead = useMemo(
@@ -1472,8 +1520,43 @@ export function CleanlyWorkspacePage({
     queueMicrotask(() => {
       void loadSavedProjects()
       void loadDashboardAnalytics()
+      void loadActivityLogs()
     })
-  }, [loadDashboardAnalytics, loadSavedProjects])
+  }, [loadActivityLogs, loadDashboardAnalytics, loadSavedProjects])
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return
+
+      if (pendingImport) {
+        setPendingImport(null)
+        setErrorMessage("")
+      }
+      if (editingLeadId) {
+        closeLeadDetail()
+      }
+      if (dateEditor) {
+        setDateEditor(null)
+      }
+      if (isColumnMenuOpen) {
+        setIsColumnMenuOpen(false)
+      }
+      if (selectedLogId) {
+        setSelectedLogId("")
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown)
+
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [
+    closeLeadDetail,
+    dateEditor,
+    editingLeadId,
+    isColumnMenuOpen,
+    pendingImport,
+    selectedLogId,
+  ])
 
   useEffect(() => {
     if (enrichmentToast.status !== "complete") return
@@ -1856,12 +1939,13 @@ export function CleanlyWorkspacePage({
         if (options.refresh !== false) {
           await loadSavedProjects()
           await loadDashboardAnalytics()
+          await loadActivityLogs()
         }
       } catch {
         setPersistenceMessage("Unable to reach the lead update API.")
       }
     },
-    [currentProjectId, loadDashboardAnalytics, loadSavedProjects]
+    [currentProjectId, loadActivityLogs, loadDashboardAnalytics, loadSavedProjects]
   )
 
   const updateLeadWorkspace = useCallback(
@@ -1940,10 +2024,12 @@ export function CleanlyWorkspacePage({
     ).then(() => {
       void loadSavedProjects()
       void loadDashboardAnalytics()
+      void loadActivityLogs()
     })
     setSelectedLeadIds([])
   }, [
     bulkOutreachStatus,
+    loadActivityLogs,
     loadDashboardAnalytics,
     loadSavedProjects,
     persistLeadWorkspace,
@@ -2663,6 +2749,7 @@ export function CleanlyWorkspacePage({
           activeTab !== "dashboard" &&
           activeTab !== "weekly" &&
           activeTab !== "settings" &&
+          activeTab !== "logs" &&
           !hasProject ? (
             <SavedFilePrompt
               title="Select a saved file"
@@ -3205,6 +3292,18 @@ export function CleanlyWorkspacePage({
               resolvedTheme={resolvedTheme ?? "system"}
               theme={theme ?? "system"}
               onThemeChange={setTheme}
+            />
+          ) : null}
+
+          {activeTab === "logs" ? (
+            <ActivityLogsView
+              logs={activityLogs}
+              selectedLogId={selectedLogId}
+              isLoading={isLogsLoading}
+              error={logsError}
+              onRefresh={() => void loadActivityLogs()}
+              onSelectLog={setSelectedLogId}
+              onCloseLog={() => setSelectedLogId("")}
             />
           ) : null}
 
@@ -4420,7 +4519,7 @@ function DashboardAnalyticsView({
             </h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
               Saved projects, files, leads, enrichment outcomes, outreach status, and
-              follow-ups roll up here. Unsaved CSV drafts are intentionally excluded.
+              follow-ups roll up here.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -5140,6 +5239,136 @@ function SettingsCard({ title, lines }: { title: string; lines: string[] }) {
           <p key={line}>{line}</p>
         ))}
       </div>
+    </div>
+  )
+}
+
+function ActivityLogsView({
+  logs,
+  selectedLogId,
+  isLoading,
+  error,
+  onRefresh,
+  onSelectLog,
+  onCloseLog,
+}: {
+  logs: ActivityLogRecord[]
+  selectedLogId: string
+  isLoading: boolean
+  error: string
+  onRefresh: () => void
+  onSelectLog: (id: string) => void
+  onCloseLog: () => void
+}) {
+  const selectedLog = logs.find((log) => log.id === selectedLogId) ?? null
+
+  return (
+    <div className="grid gap-4">
+      <section className="border border-border bg-background p-4">
+        <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <p className="text-[0.68rem] tracking-[0.2em] text-muted-foreground uppercase">
+              Governance Logs
+            </p>
+            <h2 className="mt-2 text-2xl font-medium tracking-[-0.04em]">
+              Action history across the workspace
+            </h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+              Track saved files, week changes, lead updates, deletes, and other
+              operational events. Actors are anonymous but stable when the same request
+              identity is available.
+            </p>
+          </div>
+          <Button variant="outline" onClick={onRefresh} disabled={isLoading}>
+            {isLoading ? <LoaderCircle className="animate-spin" /> : <RefreshCcw />}
+            Refresh
+          </Button>
+        </div>
+        {error ? (
+          <div className="mt-4 flex items-start gap-2 border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            <AlertCircle className="mt-0.5 size-4 shrink-0" />
+            <p>{error}</p>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="border border-border bg-background">
+        <div className="grid border-b border-border px-4 py-3 text-[0.68rem] tracking-[0.18em] text-muted-foreground uppercase md:grid-cols-[10rem_minmax(0,1fr)_12rem_10rem]">
+          <span>Time</span>
+          <span>Action</span>
+          <span>Actor</span>
+          <span>Entity</span>
+        </div>
+        <div className="grid">
+          {logs.map((log) => (
+            <button
+              key={log.id}
+              onClick={() => onSelectLog(log.id)}
+              className="grid min-w-0 gap-2 border-b border-border px-4 py-3 text-left text-sm transition-colors last:border-b-0 hover:bg-muted/60 md:grid-cols-[10rem_minmax(0,1fr)_12rem_10rem] md:items-center"
+            >
+              <span className="text-xs text-muted-foreground">
+                {formatDateTime(log.createdAt)}
+              </span>
+              <span className="min-w-0">
+                <TruncatedText value={log.title} className="font-medium" />
+                <TruncatedText
+                  value={log.description}
+                  className="mt-1 text-xs text-muted-foreground"
+                />
+              </span>
+              <StatusPill label={log.actor} tone="info" />
+              <StatusPill label={log.entityType.toLowerCase()} tone="neutral" />
+            </button>
+          ))}
+          {logs.length === 0 ? (
+            <div className="px-4 py-12 text-center text-sm text-muted-foreground">
+              No activity has been recorded yet.
+            </div>
+          ) : null}
+        </div>
+      </section>
+
+      {selectedLog ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-background/80 px-4 backdrop-blur-sm">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="activity-log-title"
+            className="max-h-[90vh] w-full max-w-2xl overflow-y-auto border border-border bg-background shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+              <div className="min-w-0">
+                <p className="text-[0.68rem] tracking-[0.2em] text-muted-foreground uppercase">
+                  Log Detail
+                </p>
+                <h2 id="activity-log-title" className="mt-2 text-xl font-medium">
+                  {selectedLog.title}
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {selectedLog.description}
+                </p>
+              </div>
+              <Button variant="ghost" size="icon" onClick={onCloseLog}>
+                <X />
+              </Button>
+            </div>
+            <div className="grid gap-3 p-5">
+              <InfoLine label="Actor" value={selectedLog.actor} />
+              <InfoLine label="Action" value={selectedLog.action} />
+              <InfoLine label="Entity" value={`${selectedLog.entityType} ${selectedLog.entityId}`} />
+              <InfoLine label="Time" value={formatDateTime(selectedLog.createdAt)} />
+              <div className="grid gap-2">
+                <p className="text-[0.68rem] tracking-[0.16em] text-muted-foreground uppercase">
+                  Metadata
+                </p>
+                <pre className="max-h-80 overflow-auto border border-border bg-muted/30 p-3 text-xs">
+                  {JSON.stringify(selectedLog.metadata, null, 2)}
+                </pre>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   )
 }

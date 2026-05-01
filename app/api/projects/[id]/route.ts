@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 
+import { getAnonymousActor } from "@/lib/activity-db"
 import {
   deleteProjectSnapshot,
   getProjectSnapshot,
@@ -66,10 +67,13 @@ export async function PUT(request: Request, context: RouteContext) {
   try {
     const { id } = await context.params
     const snapshot = (await request.json()) as LeadProjectSnapshot
-    const project = await saveProjectSnapshot({
-      ...snapshot,
-      id,
-    })
+    const project = await saveProjectSnapshot(
+      {
+        ...snapshot,
+        id,
+      },
+      getAnonymousActor(request)
+    )
 
     return NextResponse.json({
       ok: true,
@@ -94,7 +98,11 @@ export async function PATCH(request: Request, context: RouteContext) {
   try {
     const { id } = await context.params
     const payload = (await request.json()) as { uploadWeek?: string }
-    const project = await updateProjectWeek(id, payload.uploadWeek ?? "unassigned")
+    const project = await updateProjectWeek(
+      id,
+      payload.uploadWeek ?? "unassigned",
+      getAnonymousActor(request)
+    )
 
     return NextResponse.json({
       ok: true,
@@ -118,7 +126,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
 
   try {
     const { id } = await context.params
-    await deleteProjectSnapshot(id)
+    await deleteProjectSnapshot(id, getAnonymousActor(_request))
 
     return NextResponse.json({
       ok: true,
