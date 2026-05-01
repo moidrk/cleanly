@@ -551,6 +551,8 @@ const TAB_ICONS: Record<TabKey, React.ComponentType<{ className?: string }>> = {
   settings: Settings2,
 }
 
+const WEEKLY_WORKFLOW_START = new Date(2026, 2, 1)
+
 function makeHeadersUnique(rawHeaders: string[]) {
   const counts = new Map<string, number>()
 
@@ -714,9 +716,15 @@ function getWeekOptions(projects: ProjectSummary[], activeProject?: LeadProject 
   }
 
   years.forEach((year) => {
+    const yearStart = new Date(year, 0, 1)
+    const intervalStart =
+      year === WEEKLY_WORKFLOW_START.getFullYear()
+        ? WEEKLY_WORKFLOW_START
+        : yearStart
+
     eachWeekOfInterval(
       {
-        start: startOfWeek(new Date(year, 0, 1), {
+        start: startOfWeek(intervalStart, {
           weekStartsOn: WEEK_STARTS_ON,
         }),
         end: endOfWeek(new Date(year, 11, 31), {
@@ -729,7 +737,9 @@ function getWeekOptions(projects: ProjectSummary[], activeProject?: LeadProject 
     })
   })
 
-  return [...starts].sort()
+  const cutoffWeek = getWeekKey(WEEKLY_WORKFLOW_START)
+
+  return [...starts].filter((weekKey) => weekKey >= cutoffWeek).sort()
 }
 
 function getSelectedHeaderNames(selectedFields: EnrichFieldKey[]) {
@@ -1090,6 +1100,7 @@ export function CleanlyWorkspacePage({
   const [activeOutreachIndex, setActiveOutreachIndex] = useState(0)
   const [draggedProjectId, setDraggedProjectId] = useState("")
   const [weeklyDropTarget, setWeeklyDropTarget] = useState("")
+  const [isFloatingUnassignHot, setIsFloatingUnassignHot] = useState(false)
   const [recentlyMovedProjectId, setRecentlyMovedProjectId] = useState("")
   const [showFullYearWorkflow, setShowFullYearWorkflow] = useState(false)
 
@@ -1337,6 +1348,7 @@ export function CleanlyWorkspacePage({
         event.dataTransfer.getData("text/cleanly-project-id") || draggedProjectId
 
       setWeeklyDropTarget("")
+      setIsFloatingUnassignHot(false)
       setDraggedProjectId("")
       if (!projectId) return
 
@@ -2649,6 +2661,7 @@ export function CleanlyWorkspacePage({
           activeTab !== "files" &&
           activeTab !== "leads" &&
           activeTab !== "dashboard" &&
+          activeTab !== "weekly" &&
           activeTab !== "settings" &&
           !hasProject ? (
             <SavedFilePrompt
@@ -3000,6 +3013,7 @@ export function CleanlyWorkspacePage({
                           onDragEnd={() => {
                             setDraggedProjectId("")
                             setWeeklyDropTarget("")
+                            setIsFloatingUnassignHot(false)
                           }}
                         />
                       ))}
@@ -3095,6 +3109,7 @@ export function CleanlyWorkspacePage({
                                     onDragEnd={() => {
                                       setDraggedProjectId("")
                                       setWeeklyDropTarget("")
+                                      setIsFloatingUnassignHot(false)
                                     }}
                                   />
                                 ))}
@@ -3125,6 +3140,49 @@ export function CleanlyWorkspacePage({
                   </Button>
                 </div>
               ) : null}
+
+              <AnimatePresence>
+                {draggedProjectId ? (
+                  <motion.div
+                    initial={{ opacity: 0, y: 28, scale: 0.96 }}
+                    animate={{
+                      opacity: 1,
+                      y: 0,
+                      scale: isFloatingUnassignHot ? 1.04 : 1,
+                    }}
+                    exit={{ opacity: 0, y: 28, scale: 0.96 }}
+                    transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                    onDragOver={(event) => {
+                      event.preventDefault()
+                      setIsFloatingUnassignHot(true)
+                      setWeeklyDropTarget("unassigned")
+                    }}
+                    onDragLeave={() => {
+                      setIsFloatingUnassignHot(false)
+                      setWeeklyDropTarget("")
+                    }}
+                    onDrop={(event) => handleWorkflowDrop(event, "unassigned")}
+                    className={[
+                      "fixed right-4 bottom-4 z-50 flex items-center gap-3 border border-amber-400 bg-amber-50 px-4 py-3 text-amber-950 shadow-2xl dark:bg-amber-950 dark:text-amber-100 sm:right-6 sm:bottom-6",
+                      isFloatingUnassignHot ? "w-80" : "w-48",
+                    ].join(" ")}
+                  >
+                    <div className="grid size-9 shrink-0 place-items-center border border-amber-500/50 bg-amber-100 dark:bg-amber-900">
+                      <FolderKanban className="size-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium tracking-[0.18em] uppercase">
+                        Unassign
+                      </p>
+                      <p className="mt-1 truncate text-xs opacity-75">
+                        {isFloatingUnassignHot
+                          ? "Release to move file here"
+                          : "Drop here"}
+                      </p>
+                    </div>
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
             </div>
           ) : null}
 
