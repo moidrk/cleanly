@@ -1748,36 +1748,35 @@ export function CleanlyWorkspacePage({
 
   const updateLeadWorkspace = useCallback(
     (leadId: string, patch: Partial<WorkspaceFields>) => {
-      let persistedWorkspace: WorkspaceFields | null = null
+      const lead = project?.leads.find((item) => item.id === leadId)
+      if (!lead) return
+
+      const persistedWorkspace: WorkspaceFields = {
+        ...lead.workspace,
+        ...patch,
+        attemptCount:
+          patch.outreachStatus && patch.outreachStatus !== "not_contacted"
+            ? Math.max(lead.workspace.attemptCount, 1)
+            : patch.attemptCount ?? lead.workspace.attemptCount,
+      }
 
       updateProjectLeads((leads) =>
-        leads.map((lead) =>
-          {
-            if (lead.id !== leadId) return lead
+        leads.map((currentLead) => {
+          if (currentLead.id !== leadId) return currentLead
 
-            persistedWorkspace = {
-              ...lead.workspace,
-              ...patch,
-              attemptCount:
-                patch.outreachStatus && patch.outreachStatus !== "not_contacted"
-                  ? Math.max(lead.workspace.attemptCount, 1)
-                  : patch.attemptCount ?? lead.workspace.attemptCount,
-            }
-
-            return {
-              ...lead,
-              workspace: persistedWorkspace,
-              updatedAt: new Date().toISOString(),
-            }
+          return {
+            ...currentLead,
+            workspace: persistedWorkspace,
+            updatedAt: new Date().toISOString(),
           }
-        )
+        })
       )
 
-      if (!currentProjectId || !persistedWorkspace) return
+      if (!currentProjectId) return
 
       void persistLeadWorkspace(leadId, persistedWorkspace)
     },
-    [currentProjectId, persistLeadWorkspace, updateProjectLeads]
+    [currentProjectId, persistLeadWorkspace, project?.leads, updateProjectLeads]
   )
 
   const confirmLeadDetail = useCallback(() => {
@@ -3425,23 +3424,73 @@ export function CleanlyWorkspacePage({
                               </td>
                             ) : null}
                             {visibleLeadColumns.outreach ? (
-                              <td className="px-3 py-3">
-                                <StatusPill
-                                  label={OUTREACH_STATUS_LABELS[lead.workspace.outreachStatus]}
-                                  className={
-                                    OUTREACH_STATUS_CLASSES[lead.workspace.outreachStatus]
+                              <td
+                                className="px-3 py-3"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <Select
+                                  value={lead.workspace.outreachStatus}
+                                  onChange={(event) =>
+                                    updateLeadWorkspace(lead.id, {
+                                      outreachStatus: event.target.value as OutreachStatus,
+                                      lastContactedAt:
+                                        event.target.value === "not_contacted"
+                                          ? lead.workspace.lastContactedAt
+                                          : lead.workspace.lastContactedAt ||
+                                            new Date().toISOString().slice(0, 10),
+                                    })
                                   }
-                                />
+                                  className={[
+                                    "h-8 min-w-36 rounded-full px-3 py-1 text-xs",
+                                    OUTREACH_STATUS_CLASSES[
+                                      lead.workspace.outreachStatus
+                                    ],
+                                  ].join(" ")}
+                                  aria-label="Update outreach status"
+                                >
+                                  {Object.entries(OUTREACH_STATUS_LABELS).map(
+                                    ([value, label]) => (
+                                      <option key={value} value={value}>
+                                        {label}
+                                      </option>
+                                    )
+                                  )}
+                                </Select>
                               </td>
                             ) : null}
                             {visibleLeadColumns.response ? (
-                              <td className="px-3 py-3">
-                                <StatusPill
-                                  label={RESPONSE_STATUS_LABELS[lead.workspace.responseStatus]}
-                                  className={
-                                    RESPONSE_STATUS_CLASSES[lead.workspace.responseStatus]
+                              <td
+                                className="px-3 py-3"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <Select
+                                  value={lead.workspace.responseStatus}
+                                  onChange={(event) =>
+                                    updateLeadWorkspace(lead.id, {
+                                      responseStatus: event.target.value as ResponseStatus,
+                                      outreachStatus:
+                                        event.target.value === "positive" ||
+                                        event.target.value === "negative"
+                                          ? "responded"
+                                          : lead.workspace.outreachStatus,
+                                    })
                                   }
-                                />
+                                  className={[
+                                    "h-8 min-w-32 rounded-full px-3 py-1 text-xs",
+                                    RESPONSE_STATUS_CLASSES[
+                                      lead.workspace.responseStatus
+                                    ],
+                                  ].join(" ")}
+                                  aria-label="Update response status"
+                                >
+                                  {Object.entries(RESPONSE_STATUS_LABELS).map(
+                                    ([value, label]) => (
+                                      <option key={value} value={value}>
+                                        {label}
+                                      </option>
+                                    )
+                                  )}
+                                </Select>
                               </td>
                             ) : null}
                             {visibleLeadColumns.lastContacted ? (
