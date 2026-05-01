@@ -8,12 +8,12 @@ const Select = React.forwardRef<
   React.ComponentPropsWithoutRef<"select">
 >(({ className, children, ...props }, ref) => {
   return (
-    <div className="relative">
+    <div className="relative min-w-0">
       <select
         ref={ref}
         data-slot="select"
         className={cn(
-          "h-11 w-full appearance-none border border-border bg-background px-4 pr-10 text-sm tracking-[0.08em] text-foreground uppercase outline-none transition-colors focus:border-foreground disabled:cursor-not-allowed disabled:opacity-50",
+          "h-11 min-w-0 w-full truncate appearance-none border border-border bg-background px-4 pr-10 text-sm tracking-[0.08em] text-foreground uppercase outline-none transition-colors focus:border-foreground disabled:cursor-not-allowed disabled:opacity-50",
           className
         )}
         {...props}

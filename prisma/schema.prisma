@@ -1,0 +1,217 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ProjectStatus {
+  ACTIVE   @map("active")
+  PAUSED   @map("paused")
+  ARCHIVED @map("archived")
+}
+
+enum LeadFileStatus {
+  UNASSIGNED           @map("unassigned")
+  IMPORTED             @map("imported")
+  NEEDS_ENRICHMENT     @map("needs_enrichment")
+  ENRICHING            @map("enriching")
+  ENRICHED             @map("enriched")
+  NEEDS_REVIEW         @map("needs_review")
+  READY_FOR_OUTREACH   @map("ready_for_outreach")
+  ARCHIVED             @map("archived")
+}
+
+enum EnrichmentStatus {
+  NOT_ENRICHED @map("not_enriched")
+  ENRICHED     @map("enriched")
+  NOT_FOUND    @map("not_found")
+  INVALID_NPI  @map("invalid_npi")
+  ERROR        @map("error")
+}
+
+enum CleanlyStatus {
+  NEW          @map("new")
+  NEEDS_REVIEW @map("needs_review")
+  CLEANED      @map("cleaned")
+  APPROVED     @map("approved")
+  ARCHIVED     @map("archived")
+}
+
+enum OutreachStatus {
+  NOT_CONTACTED    @map("not_contacted")
+  CONTACTED        @map("contacted")
+  FOLLOW_UP_NEEDED @map("follow_up_needed")
+  RESPONDED        @map("responded")
+  NOT_INTERESTED   @map("not_interested")
+  BAD_CONTACT      @map("bad_contact")
+  DO_NOT_CONTACT   @map("do_not_contact")
+}
+
+enum ResponseStatus {
+  UNKNOWN         @map("unknown")
+  NO_RESPONSE     @map("no_response")
+  POSITIVE        @map("positive")
+  NEGATIVE        @map("negative")
+  NEEDS_FOLLOW_UP @map("needs_follow_up")
+}
+
+enum ActivityEntityType {
+  PROJECT @map("project")
+  FILE    @map("file")
+  LEAD    @map("lead")
+}
+
+model Project {
+  id          String        @id @default(cuid())
+  name        String
+  description String        @default("")
+  status      ProjectStatus @default(ACTIVE)
+  files       LeadFile[]
+  leads       Lead[]
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("projects")
+}
+
+model LeadFile {
+  id               String           @id @default(cuid())
+  projectId        String           @map("project_id")
+  project          Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  originalFilename String           @map("original_filename")
+  displayName      String           @map("display_name")
+  fileType         String           @default("csv") @map("file_type")
+  uploadDate       DateTime         @default(now()) @map("upload_date")
+  uploadWeek       String           @default("unassigned") @map("upload_week")
+  uploadedBy       String           @default("") @map("uploaded_by")
+  rowCount         Int              @default(0) @map("row_count")
+  status           LeadFileStatus   @default(UNASSIGNED)
+  leads            Lead[]
+  tags             LeadFileTag[]
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+
+  @@index([projectId])
+  @@index([status])
+  @@index([uploadWeek])
+  @@map("lead_files")
+}
+
+model Lead {
+  id               String           @id @default(cuid())
+  projectId        String           @map("project_id")
+  project          Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fileId           String           @map("file_id")
+  file             LeadFile         @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  rowIndex         Int              @map("row_index")
+  npiNumber        String           @default("") @map("npi_number")
+  firstName        String           @default("") @map("first_name")
+  lastName         String           @default("") @map("last_name")
+  fullName         String           @default("") @map("full_name")
+  organizationName String           @default("") @map("organization_name")
+  email            String           @default("")
+  phone            String           @default("")
+  fax              String           @default("")
+  address          String           @default("")
+  city             String           @default("")
+  state            String           @default("")
+  zip              String           @default("")
+  specialty        String           @default("")
+  primaryTaxonomy  String           @default("") @map("primary_taxonomy")
+  rawRowData       Json             @map("raw_row_data")
+  enrichmentData   Json             @map("enrichment_data")
+  enrichmentStatus EnrichmentStatus @default(NOT_ENRICHED) @map("enrichment_status")
+  cleanlyStatus    CleanlyStatus    @default(NEW) @map("cleanly_status")
+  outreachStatus   OutreachStatus   @default(NOT_CONTACTED) @map("outreach_status")
+  responseStatus   ResponseStatus   @default(UNKNOWN) @map("response_status")
+  attemptCount     Int              @default(0) @map("attempt_count")
+  lastContactedAt  DateTime?        @map("last_contacted_at")
+  nextFollowUpAt   DateTime?        @map("next_follow_up_at")
+  notes            String           @default("")
+  ownerId          String?          @map("owner_id")
+  owner            TeamMember?      @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  tags             LeadTag[]
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+
+  @@index([projectId])
+  @@index([fileId])
+  @@index([npiNumber])
+  @@index([enrichmentStatus])
+  @@index([cleanlyStatus])
+  @@index([outreachStatus])
+  @@index([responseStatus])
+  @@index([nextFollowUpAt])
+  @@map("leads")
+}
+
+model Tag {
+  id        String        @id @default(cuid())
+  name      String        @unique
+  color     String        @default("#111111")
+  files     LeadFileTag[]
+  leads     LeadTag[]
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  @@map("tags")
+}
+
+model LeadFileTag {
+  fileId String   @map("file_id")
+  tagId  String   @map("tag_id")
+  file   LeadFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  tag    Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([fileId, tagId])
+  @@map("lead_file_tags")
+}
+
+model LeadTag {
+  leadId String @map("lead_id")
+  tagId  String @map("tag_id")
+  lead   Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([leadId, tagId])
+  @@map("lead_tags")
+}
+
+model TeamMember {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  role      String   @default("operator")
+  leads     Lead[]
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("team_members")
+}
+
+model ActivityLog {
+  id         String             @id @default(cuid())
+  entityType ActivityEntityType @map("entity_type")
+  entityId   String             @map("entity_id")
+  action     String
+  metadata   Json
+  createdBy  String             @default("") @map("created_by")
+  createdAt  DateTime           @default(now()) @map("created_at")
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("activity_log")
+}
+
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
