@@ -594,11 +594,19 @@ const TAB_ICONS: Record<TabKey, React.ComponentType<{ className?: string }>> = {
 
 const WEEKLY_WORKFLOW_START = new Date(2026, 2, 1)
 
-function makeHeadersUnique(rawHeaders: string[]) {
+function toSafeCsvString(value: unknown) {
+  if (value === null || value === undefined) return ""
+  return String(value)
+}
+
+function makeHeadersUnique(rawHeaders: unknown[]) {
   const counts = new Map<string, number>()
 
   return rawHeaders.map((header, index) => {
-    const baseHeader = header.trim() || `Column ${index + 1}`
+    const headerValue = toSafeCsvString(header)
+    const normalizedHeader =
+      index === 0 ? headerValue.replace(/^\uFEFF/, "") : headerValue
+    const baseHeader = normalizedHeader.trim() || `Column ${index + 1}`
     const nextCount = (counts.get(baseHeader) ?? 0) + 1
     counts.set(baseHeader, nextCount)
 
@@ -606,13 +614,13 @@ function makeHeadersUnique(rawHeaders: string[]) {
   })
 }
 
-function isBlankRow(values: string[]) {
-  return values.every((value) => value.trim() === "")
+function isBlankRow(values: unknown[]) {
+  return values.every((value) => toSafeCsvString(value).trim() === "")
 }
 
-function toCsvRow(headers: string[], values: string[]) {
+function toCsvRow(headers: string[], values: unknown[]) {
   return headers.reduce<CsvRow>((row, header, index) => {
-    row[header] = values[index] ?? ""
+    row[header] = toSafeCsvString(values[index])
     return row
   }, {})
 }
@@ -1862,47 +1870,55 @@ export function CleanlyWorkspacePage({
     setStats(initialStats)
     setEnrichmentToast({ status: "idle" })
 
-    Papa.parse<string[]>(file, {
+    Papa.parse<unknown[]>(file, {
       complete: (results) => {
-        const matrix = results.data.filter((row) => Array.isArray(row))
-
-        if (matrix.length === 0) {
-          setErrorMessage("The uploaded CSV is empty.")
-          return
-        }
-
-        const rawHeaders = matrix[0] ?? []
-        const uniqueHeaders = makeHeadersUnique(rawHeaders)
-        const csvRows = matrix
-          .slice(1)
-          .filter((row) => !isBlankRow(row))
-          .map((row) => toCsvRow(uniqueHeaders, row))
-
-        if (uniqueHeaders.length === 0 || csvRows.length === 0) {
-          setErrorMessage(
-            "The CSV must include a header row and at least one data row."
+        try {
+          const matrix = results.data.filter((row): row is unknown[] =>
+            Array.isArray(row)
           )
-          return
-        }
 
-        const now = new Date().toISOString()
-        suppressUrlProjectReloadRef.current = true
-        setProject(null)
-        setPendingImport({
-          id: `project-${Date.now()}`,
-          name: fileNameToProjectName(file.name),
-          fileName: file.name,
-          headers: uniqueHeaders,
-          rows: csvRows,
-          selectedNpiColumn: detectNpiHeader(uniqueHeaders),
-          selectedFields: DEFAULT_SELECTED_FIELDS,
-          createdAt: now,
-        })
-        goToTab("enrich")
-        setActiveView("all")
-        setSearchTerm("")
-        setSelectedLeadId("")
-        setSelectedLeadIds([])
+          if (matrix.length === 0) {
+            setErrorMessage("The uploaded CSV is empty.")
+            return
+          }
+
+          const rawHeaders = matrix[0] ?? []
+          const uniqueHeaders = makeHeadersUnique(rawHeaders)
+          const csvRows = matrix
+            .slice(1)
+            .filter((row) => !isBlankRow(row))
+            .map((row) => toCsvRow(uniqueHeaders, row))
+
+          if (uniqueHeaders.length === 0 || csvRows.length === 0) {
+            setErrorMessage(
+              "The CSV must include a header row and at least one data row."
+            )
+            return
+          }
+
+          const now = new Date().toISOString()
+          suppressUrlProjectReloadRef.current = true
+          setProject(null)
+          setPendingImport({
+            id: `project-${Date.now()}`,
+            name: fileNameToProjectName(file.name),
+            fileName: file.name,
+            headers: uniqueHeaders,
+            rows: csvRows,
+            selectedNpiColumn: detectNpiHeader(uniqueHeaders),
+            selectedFields: DEFAULT_SELECTED_FIELDS,
+            createdAt: now,
+          })
+          goToTab("enrich")
+          setActiveView("all")
+          setSearchTerm("")
+          setSelectedLeadId("")
+          setSelectedLeadIds([])
+        } catch {
+          setErrorMessage(
+            "The CSV could not be prepared. Please check the file and try again."
+          )
+        }
       },
       error: () => {
         setErrorMessage("The CSV could not be parsed. Please try another file.")
