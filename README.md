@@ -19,12 +19,27 @@ Create `.env` locally:
 
 ```bash
 DATABASE_URL="postgresql://USER:PASSWORD@HOST:PORT/DATABASE"
+REDIS_URL="redis://default:PASSWORD@HOST:PORT"
+```
+
+Optional cache TTL tuning:
+
+```bash
+REDIS_NPI_TTL_SECONDS=86400
+REDIS_NPI_NOT_FOUND_TTL_SECONDS=3600
+REDIS_DASHBOARD_TTL_SECONDS=60
 ```
 
 Railway should provide `DATABASE_URL` from the Railway Postgres service. If the service is named `Postgres`, set the app service variable to:
 
 ```bash
 DATABASE_URL=${{Postgres.DATABASE_URL}}
+```
+
+If the Railway Redis service is named `Redis`, set:
+
+```bash
+REDIS_URL=${{Redis.REDIS_URL}}
 ```
 
 ## Local Development
@@ -80,11 +95,13 @@ Recommended Railway setup:
 
 1. Create a Railway project.
 2. Add a Railway Postgres service.
-3. Add this Next.js app service from the repository.
-4. Set `DATABASE_URL` on the app service using the Postgres service reference variable.
-5. Deploy the app.
-6. Confirm `npm run db:deploy` runs before the app starts.
-7. Check Railway deployment logs for migration, build, start, and health-check failures.
+3. Add a Railway Redis service.
+4. Add this Next.js app service from the repository.
+5. Set `DATABASE_URL` on the app service using the Postgres service reference variable.
+6. Set `REDIS_URL` on the app service using the Redis service reference variable.
+7. Deploy the app.
+8. Confirm `npm run db:deploy` runs before the app starts.
+9. Check Railway deployment logs for migration, build, start, cache, and health-check failures.
 
 The Railway CLI is not currently installed in this local environment, so linking, deploying, and checking Railway logs must be done from a machine/session with Railway CLI access or from the Railway dashboard.
 
@@ -105,6 +122,7 @@ npm run db:studio
 ## Persistence Decisions
 
 - Railway Postgres is the source of truth for business data.
+- Railway Redis is an optional shared cache for NPI lookups and dashboard analytics.
 - Browser storage may only be used for harmless UI preferences such as selected tab, table density, filters, or column visibility.
 - Uploaded CSVs should be stored as parsed database rows plus file metadata for the MVP.
 - Server filesystem storage is not durable and should not be used for uploaded list retention.
@@ -121,6 +139,15 @@ The first persistence pass saves the current client workspace snapshot while als
 - `DELETE /api/projects/:id` deletes a saved project and its files/leads.
 
 The UI loads the most recently updated saved project on startup when the database is available. If `DATABASE_URL` is missing, the app still supports in-memory import/enrichment/export, but saved projects will not survive refresh.
+
+## Cache Behavior
+
+- `GET /api/npi` caches normalized NPI responses in Redis by normalized NPI number.
+- Successful NPI responses default to a 24 hour TTL.
+- NPI not-found responses default to a 1 hour TTL.
+- Invalid NPI inputs and upstream CMS failures are not cached.
+- Dashboard analytics are cached in Redis with a short TTL and invalidated after project, file-week, and lead-workspace mutations.
+- If `REDIS_URL` is missing or Redis is unavailable, the app falls back to live CMS and Postgres reads without failing requests.
 
 ## Lead Workspace And Weekly Workflow
 

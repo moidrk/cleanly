@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 
 import {
   createEmptyDashboardAnalytics,
-  getDashboardAnalytics,
+  getCachedDashboardAnalytics,
 } from "@/lib/dashboard-db"
 
 export async function GET() {
@@ -16,7 +16,7 @@ export async function GET() {
   }
 
   try {
-    const dashboard = await getDashboardAnalytics()
+    const dashboard = await getCachedDashboardAnalytics()
 
     return NextResponse.json({
       ok: true,

@@ -7,6 +7,11 @@ import {
   type NpiApiResponse,
   type NpiLookupResponse,
 } from "@/lib/npi"
+import { getEnvTtlSeconds, getRedisJson, setRedisJson } from "@/lib/redis"
+
+const NPI_CACHE_KEY_PREFIX = "cleanly:npi:v1:"
+const DEFAULT_NPI_TTL_SECONDS = 60 * 60 * 24
+const DEFAULT_NPI_NOT_FOUND_TTL_SECONDS = 60 * 60
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
@@ -22,6 +27,13 @@ export async function GET(request: Request) {
     }
 
     return NextResponse.json(payload, { status: 400 })
+  }
+
+  const cacheKey = `${NPI_CACHE_KEY_PREFIX}${number}`
+  const cachedPayload = await getRedisJson<NpiLookupResponse>(cacheKey)
+
+  if (cachedPayload) {
+    return NextResponse.json(cachedPayload)
   }
 
   try {
@@ -51,6 +63,17 @@ export async function GET(request: Request) {
       fields: flattenNpiRecord(record),
       error: record ? undefined : "NPI not found",
     }
+
+    await setRedisJson(
+      cacheKey,
+      payload,
+      record
+        ? getEnvTtlSeconds("REDIS_NPI_TTL_SECONDS", DEFAULT_NPI_TTL_SECONDS)
+        : getEnvTtlSeconds(
+            "REDIS_NPI_NOT_FOUND_TTL_SECONDS",
+            DEFAULT_NPI_NOT_FOUND_TTL_SECONDS
+          )
+    )
 
     return NextResponse.json(payload)
   } catch {

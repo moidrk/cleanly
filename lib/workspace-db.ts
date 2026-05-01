@@ -15,6 +15,7 @@ import {
   type EnrichFieldKey,
   type EnrichedNpiFields,
 } from "@/lib/npi"
+import { invalidateDashboardCache } from "@/lib/dashboard-db"
 
 type CsvRow = Record<string, string>
 type ClientEnrichmentStatus =
@@ -535,6 +536,7 @@ export async function saveProjectSnapshot(
     })
   })
 
+  await invalidateDashboardCache()
   return getProjectSnapshot(projectId)
 }
 
@@ -573,6 +575,8 @@ export async function deleteProjectSnapshot(
         where: { id: projectId },
       })
   })
+
+  await invalidateDashboardCache()
 }
 
 export async function updateProjectWeek(
@@ -609,6 +613,7 @@ export async function updateProjectWeek(
     }),
   ])
 
+  await invalidateDashboardCache()
   return getProjectSnapshot(projectId)
 }
 
@@ -703,5 +708,6 @@ export async function updateLeadWorkspace(
     }),
   ])
 
+  await invalidateDashboardCache()
   return getProjectSnapshot(projectId)
 }

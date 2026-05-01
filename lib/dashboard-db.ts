@@ -7,6 +7,7 @@ import {
   OutreachStatus,
   ResponseStatus,
 } from "@/lib/generated/prisma/client"
+import { deleteRedisKeys, getEnvTtlSeconds, getRedisJson, setRedisJson } from "@/lib/redis"
 
 export interface DashboardTotals {
   files: number
@@ -96,6 +97,9 @@ const EMPTY_TOTALS: DashboardTotals = {
   contacted: 0,
   responded: 0,
 }
+
+const DASHBOARD_CACHE_KEY = "cleanly:dashboard:v1"
+const DEFAULT_DASHBOARD_TTL_SECONDS = 60
 
 const OUTREACH_META: Record<
   OutreachStatus,
@@ -478,4 +482,24 @@ export async function getDashboardAnalytics(): Promise<DashboardAnalytics> {
     followUpsDue,
     filesNeedingReview,
   }
+}
+
+export async function getCachedDashboardAnalytics(): Promise<DashboardAnalytics> {
+  const cachedDashboard = await getRedisJson<DashboardAnalytics>(DASHBOARD_CACHE_KEY)
+  if (cachedDashboard) {
+    return cachedDashboard
+  }
+
+  const dashboard = await getDashboardAnalytics()
+  await setRedisJson(
+    DASHBOARD_CACHE_KEY,
+    dashboard,
+    getEnvTtlSeconds("REDIS_DASHBOARD_TTL_SECONDS", DEFAULT_DASHBOARD_TTL_SECONDS)
+  )
+
+  return dashboard
+}
+
+export async function invalidateDashboardCache() {
+  await deleteRedisKeys([DASHBOARD_CACHE_KEY])
 }
