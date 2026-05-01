@@ -5189,6 +5189,7 @@ function WorkflowFileCard({
   return (
     <motion.div
       layout
+      className={variant === "unassigned" ? "w-72 shrink-0" : "min-w-0 max-w-full"}
       initial={{ opacity: 0, y: 10, scale: 0.98 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: -8, scale: 0.98 }}
@@ -5201,9 +5202,9 @@ function WorkflowFileCard({
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
       className={[
-        "min-w-0 overflow-hidden border p-3 text-left shadow-sm transition-colors",
+        "block min-w-0 max-w-full overflow-hidden border p-3 text-left shadow-sm transition-colors",
         variant === "unassigned"
-          ? "w-72 shrink-0 border-amber-300 bg-amber-50/80 text-amber-950 hover:border-amber-500 dark:bg-amber-950/20 dark:text-amber-100"
+          ? "w-full border-amber-300 bg-amber-50/80 text-amber-950 hover:border-amber-500 dark:bg-amber-950/20 dark:text-amber-100"
           : "w-full border-border bg-background hover:border-foreground hover:bg-muted/60",
         isMoved
           ? "border-emerald-500 bg-emerald-50 text-emerald-950 dark:bg-emerald-950/25 dark:text-emerald-100"
@@ -5211,8 +5212,8 @@ function WorkflowFileCard({
       ].join(" ")}
       title="Drag to another week or open in Leads"
     >
-      <div className="flex min-w-0 items-start justify-between gap-3">
-        <div className="min-w-0">
+      <div className="flex min-w-0 max-w-full items-start justify-between gap-3 overflow-hidden">
+        <div className="min-w-0 max-w-full flex-1 overflow-hidden">
           <TruncatedText value={project.name} className="text-sm font-medium" />
           <TruncatedText
             value={project.fileName || "Saved list"}
