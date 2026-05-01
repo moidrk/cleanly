@@ -164,6 +164,7 @@ type TabKey =
   | "dashboard"
   | "settings"
   | "logs"
+type ToastTone = "success" | "warning" | "destructive" | "info"
 
 interface WorkspaceFields {
   status: "active" | "needs_review" | "clean" | "archived"
@@ -323,6 +324,12 @@ interface ActivityLogRecord {
   title: string
   description: string
   metadata: Record<string, unknown>
+}
+
+interface AppToast {
+  id: string
+  message: string
+  tone: ToastTone
 }
 
 type EnrichmentToast =
@@ -719,6 +726,39 @@ function getWeekRangeLabel(weekKey: string) {
 
   const weekEnd = endOfWeek(weekStart, { weekStartsOn: WEEK_STARTS_ON })
   return `${format(weekStart, "MMM d")} - ${format(weekEnd, "MMM d, yyyy")}`
+}
+
+function normalizeWorkflowWeek(value: string) {
+  if (!value || value === "unassigned") return "unassigned"
+  const parsed = parseWeekKey(value)
+  return parsed ? getWeekKey(parsed) : "unassigned"
+}
+
+function getToastTone(message: string): ToastTone {
+  const normalized = message.toLowerCase()
+
+  if (
+    normalized.includes("delete") ||
+    normalized.includes("unable") ||
+    normalized.includes("failed") ||
+    normalized.includes("error")
+  ) {
+    return "destructive"
+  }
+
+  if (
+    normalized.includes("updating") ||
+    normalized.includes("unassigned") ||
+    normalized.includes("assigned")
+  ) {
+    return "warning"
+  }
+
+  if (normalized.includes("saved") || normalized.includes("connected")) {
+    return "success"
+  }
+
+  return "info"
 }
 
 function getWeekShortLabel(weekKey: string) {
@@ -1152,12 +1192,16 @@ export function CleanlyWorkspacePage({
   const [isFloatingUnassignHot, setIsFloatingUnassignHot] = useState(false)
   const [recentlyMovedProjectId, setRecentlyMovedProjectId] = useState("")
   const [showFullYearWorkflow, setShowFullYearWorkflow] = useState(false)
+  const [selectedWorkflowMonths, setSelectedWorkflowMonths] = useState<string[]>([])
+  const [isWorkflowMonthMenuOpen, setIsWorkflowMonthMenuOpen] = useState(false)
+  const [appToasts, setAppToasts] = useState<AppToast[]>([])
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const hasSyncedLeadViewFromUrl = useRef(false)
   const currentProjectId = project?.id ?? ""
   const selectedFileIdFromUrl = searchParams.get("fileId") ?? ""
   const selectedViewFromUrl = searchParams.get("view")
+  const shouldOpenPickerFromUrl = searchParams.get("pick") === "1"
 
   const getTabHref = useCallback(
     (tab: TabKey, projectId?: string, extraParams?: Record<string, string>) => {
@@ -1207,6 +1251,15 @@ export function CleanlyWorkspacePage({
     },
     [getTabHref, router]
   )
+
+  const pushToast = useCallback((message: string, tone = getToastTone(message)) => {
+    const id = crypto.randomUUID()
+
+    setAppToasts((current) => [...current.slice(-4), { id, message, tone }])
+    window.setTimeout(() => {
+      setAppToasts((current) => current.filter((toast) => toast.id !== id))
+    }, 2000)
+  }, [])
 
   const loadProjectFromDatabase = useCallback(async (projectId: string) => {
     setIsLoadingProject(true)
@@ -1410,6 +1463,19 @@ export function CleanlyWorkspacePage({
     async (projectId: string, weekKey: string) => {
       if (!projectId) return
 
+      const currentSavedProject = savedProjects.find(
+        (savedProject) => savedProject.id === projectId
+      )
+      const currentWeek = normalizeWorkflowWeek(
+        currentSavedProject?.uploadWeek ??
+          (project?.id === projectId ? project.assignedWeek : "")
+      )
+      const nextWeek = normalizeWorkflowWeek(weekKey)
+
+      if (currentWeek === nextWeek) {
+        return
+      }
+
       setRecentlyMovedProjectId(projectId)
       setPersistenceMessage("Updating workflow week...")
 
@@ -1418,7 +1484,7 @@ export function CleanlyWorkspacePage({
           savedProject.id === projectId
             ? {
                 ...savedProject,
-                uploadWeek: weekKey,
+                uploadWeek: nextWeek,
                 updatedAt: new Date().toISOString(),
               }
             : savedProject
@@ -1428,7 +1494,7 @@ export function CleanlyWorkspacePage({
         current?.id === projectId
           ? {
               ...current,
-              assignedWeek: weekKey,
+              assignedWeek: nextWeek,
               updatedAt: new Date().toISOString(),
             }
           : current
@@ -1442,7 +1508,7 @@ export function CleanlyWorkspacePage({
             headers: {
               "Content-Type": "application/json",
             },
-            body: JSON.stringify({ uploadWeek: weekKey }),
+            body: JSON.stringify({ uploadWeek: nextWeek }),
           }
         )
         const payload = (await response.json()) as {
@@ -1461,15 +1527,15 @@ export function CleanlyWorkspacePage({
         if (payload.project && payload.project.id === currentProjectId) {
           setProject({
             ...payload.project,
-            assignedWeek: payload.project.assignedWeek || weekKey,
+            assignedWeek: payload.project.assignedWeek || nextWeek,
             leads: withCleaningAnalysis(payload.project.leads),
           })
         }
 
         setPersistenceMessage(
-          weekKey === "unassigned"
+          nextWeek === "unassigned"
             ? "File moved to unassigned."
-            : `File assigned to ${getWeekRangeLabel(weekKey)}.`
+            : `File assigned to ${getWeekRangeLabel(nextWeek)}.`
         )
         await loadSavedProjects()
         await loadDashboardAnalytics()
@@ -1484,7 +1550,14 @@ export function CleanlyWorkspacePage({
         }, 1600)
       }
     },
-    [currentProjectId, loadActivityLogs, loadDashboardAnalytics, loadSavedProjects]
+    [
+      currentProjectId,
+      loadActivityLogs,
+      loadDashboardAnalytics,
+      loadSavedProjects,
+      project,
+      savedProjects,
+    ]
   )
 
   const handleWorkflowDrop = useCallback(
@@ -1636,9 +1709,31 @@ export function CleanlyWorkspacePage({
   }, [isLoadingProject, loadProjectFromDatabase, project?.id, selectedFileIdFromUrl])
 
   useEffect(() => {
+    if (activeTab !== "enrich" || !shouldOpenPickerFromUrl) return
+
+    const timeoutId = window.setTimeout(() => {
+      fileInputRef.current?.click()
+      router.replace(TAB_ROUTES.enrich)
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [activeTab, router, shouldOpenPickerFromUrl])
+
+  useEffect(() => {
     if (activeTab === "leads") return
     hasSyncedLeadViewFromUrl.current = false
   }, [activeTab])
+
+  useEffect(() => {
+    if (!persistenceMessage) return
+
+    const timeoutId = window.setTimeout(() => {
+      pushToast(persistenceMessage)
+      setPersistenceMessage("")
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [persistenceMessage, pushToast])
 
   useEffect(() => {
     if (activeTab !== "leads") return
@@ -1682,6 +1777,9 @@ export function CleanlyWorkspacePage({
       if (isColumnMenuOpen) {
         setIsColumnMenuOpen(false)
       }
+      if (isWorkflowMonthMenuOpen) {
+        setIsWorkflowMonthMenuOpen(false)
+      }
       if (selectedLogId) {
         setSelectedLogId("")
       }
@@ -1695,6 +1793,7 @@ export function CleanlyWorkspacePage({
     dateEditor,
     editingLeadId,
     isColumnMenuOpen,
+    isWorkflowMonthMenuOpen,
     pendingImport,
     selectedLogId,
   ])
@@ -2325,8 +2424,18 @@ export function CleanlyWorkspacePage({
       []
     )
   }, [weekOptions])
-  const visibleWeekGroups = showFullYearWorkflow ? weekGroups : weekGroups.slice(0, 8)
-  const hiddenWorkflowMonthCount = Math.max(weekGroups.length - visibleWeekGroups.length, 0)
+  const filteredWeekGroups =
+    selectedWorkflowMonths.length > 0
+      ? weekGroups.filter((group) => selectedWorkflowMonths.includes(group.month))
+      : weekGroups
+  const visibleWeekGroups =
+    selectedWorkflowMonths.length > 0 || showFullYearWorkflow
+      ? filteredWeekGroups
+      : filteredWeekGroups.slice(0, 8)
+  const hiddenWorkflowMonthCount =
+    selectedWorkflowMonths.length > 0
+      ? 0
+      : Math.max(filteredWeekGroups.length - visibleWeekGroups.length, 0)
   const unassignedProjects = useMemo(
     () =>
       savedProjects.filter(
@@ -2421,19 +2530,6 @@ export function CleanlyWorkspacePage({
           <div className="mt-4 flex items-start gap-3 border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
             <AlertCircle className="mt-0.5 size-4 text-destructive" />
             <p>{errorMessage}</p>
-          </div>
-        ) : null}
-
-        {persistenceMessage ? (
-          <div className="mt-4 flex items-start justify-between gap-3 border border-border bg-background px-4 py-3 text-sm">
-            <p className="text-muted-foreground">{persistenceMessage}</p>
-            <Button
-              size="xs"
-              variant="ghost"
-              onClick={() => setPersistenceMessage("")}
-            >
-              <X />
-            </Button>
           </div>
         ) : null}
 
@@ -3054,7 +3150,9 @@ export function CleanlyWorkspacePage({
                     Files
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Unsaved drafts stay in memory until you save them.
+                    Start fresh imports from Enrich. Save writes the currently opened
+                    file to the workspace database, and export downloads the currently
+                    opened file.
                   </p>
                 </div>
                 <div className="flex min-w-0 flex-wrap gap-2">
@@ -3072,15 +3170,18 @@ export function CleanlyWorkspacePage({
                     disabled={!project || isSavingProject}
                   >
                     <Save />
-                    Save current draft
+                    Save opened file
                   </Button>
-                  <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
+                  <Button
+                    variant="outline"
+                    onClick={() => goToTab("enrich", undefined, { pick: "1" })}
+                  >
                     <Upload />
-                    Import another CSV
+                    New CSV import
                   </Button>
                   <Button variant="outline" onClick={downloadCsv} disabled={!project}>
                     <Download />
-                    Export current draft
+                    Export opened file
                   </Button>
                 </div>
               </div>
@@ -3186,6 +3287,64 @@ export function CleanlyWorkspacePage({
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    <div className="relative">
+                      <Button
+                        variant="outline"
+                        onClick={() =>
+                          setIsWorkflowMonthMenuOpen((current) => !current)
+                        }
+                      >
+                        <CalendarDays />
+                        {selectedWorkflowMonths.length > 0
+                          ? `${formatStat(selectedWorkflowMonths.length)} months`
+                          : "Months"}
+                      </Button>
+                      {isWorkflowMonthMenuOpen ? (
+                        <div className="absolute right-0 z-30 mt-2 w-72 border border-border bg-background p-2 shadow-xl">
+                          <div className="flex items-center justify-between gap-3 border-b border-border px-2 pb-2">
+                            <span className="text-[0.68rem] tracking-[0.16em] text-muted-foreground uppercase">
+                              Render months
+                            </span>
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              onClick={() => setSelectedWorkflowMonths([])}
+                            >
+                              All
+                            </Button>
+                          </div>
+                          <div className="mt-2 grid max-h-72 gap-1 overflow-y-auto">
+                            {weekGroups.map((group) => (
+                              <label
+                                key={group.month}
+                                className="flex items-center gap-2 px-2 py-2 text-sm hover:bg-muted"
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="size-4 accent-foreground"
+                                  checked={selectedWorkflowMonths.includes(
+                                    group.month
+                                  )}
+                                  onChange={() =>
+                                    setSelectedWorkflowMonths((current) =>
+                                      current.includes(group.month)
+                                        ? current.filter((month) => month !== group.month)
+                                        : [...current, group.month]
+                                    )
+                                  }
+                                />
+                                <span className="min-w-0 flex-1 truncate">
+                                  {group.month}
+                                </span>
+                                <span className="text-xs text-muted-foreground">
+                                  {formatStat(group.weeks.length)}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
                     <Button
                       variant="outline"
                       onClick={() => void loadSavedProjects()}
@@ -3391,13 +3550,14 @@ export function CleanlyWorkspacePage({
               <AnimatePresence>
                 {draggedProjectId ? (
                   <motion.div
-                    initial={{ opacity: 0, y: 28, scale: 0.96 }}
+                    initial={{ opacity: 0, y: 28, x: "-50%", scale: 0.96 }}
                     animate={{
                       opacity: 1,
                       y: 0,
+                      x: "-50%",
                       scale: isFloatingUnassignHot ? 1.04 : 1,
                     }}
-                    exit={{ opacity: 0, y: 28, scale: 0.96 }}
+                    exit={{ opacity: 0, y: 28, x: "-50%", scale: 0.96 }}
                     transition={{ type: "spring", stiffness: 420, damping: 34 }}
                     onDragOver={(event) => {
                       event.preventDefault()
@@ -3410,12 +3570,12 @@ export function CleanlyWorkspacePage({
                     }}
                     onDrop={(event) => handleWorkflowDrop(event, "unassigned")}
                     className={[
-                      "fixed right-4 bottom-4 z-50 flex items-center gap-3 border border-amber-400 bg-amber-50 px-4 py-3 text-amber-950 shadow-2xl dark:bg-amber-950 dark:text-amber-100 sm:right-6 sm:bottom-6",
-                      isFloatingUnassignHot ? "w-80" : "w-48",
+                      "fixed bottom-6 left-1/2 z-50 flex items-center gap-4 border-2 border-amber-500 bg-amber-200 px-5 py-4 text-amber-950 shadow-2xl dark:border-amber-400 dark:bg-amber-900 dark:text-amber-50",
+                      isFloatingUnassignHot ? "w-96" : "w-64",
                     ].join(" ")}
                   >
-                    <div className="grid size-9 shrink-0 place-items-center border border-amber-500/50 bg-amber-100 dark:bg-amber-900">
-                      <FolderKanban className="size-4" />
+                    <div className="grid size-11 shrink-0 place-items-center border border-amber-700/50 bg-amber-300 dark:border-amber-300/50 dark:bg-amber-800">
+                      <FolderKanban className="size-5" />
                     </div>
                     <div className="min-w-0">
                       <p className="text-xs font-medium tracking-[0.18em] uppercase">
@@ -4374,6 +4534,7 @@ export function CleanlyWorkspacePage({
             }
           />
         ) : null}
+        <AppToastStack toasts={appToasts} />
       </div>
     </main>
   )
@@ -4438,6 +4599,39 @@ function ActionIconButton({
     >
       <Icon className="size-4" />
     </Button>
+  )
+}
+
+function AppToastStack({ toasts }: { toasts: AppToast[] }) {
+  const toneClasses: Record<ToastTone, string> = {
+    success:
+      "border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-100",
+    warning:
+      "border-amber-400 bg-amber-100 text-amber-950 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100",
+    destructive:
+      "border-red-300 bg-red-50 text-red-950 dark:border-red-800 dark:bg-red-950 dark:text-red-100",
+    info:
+      "border-sky-300 bg-sky-50 text-sky-950 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-100",
+  }
+
+  return (
+    <div className="fixed right-4 bottom-4 z-[60] grid w-[min(24rem,calc(100vw-2rem))] gap-2">
+      <AnimatePresence initial={false}>
+        {toasts.map((toast) => (
+          <motion.div
+            key={toast.id}
+            layout
+            initial={{ opacity: 0, x: 24, scale: 0.98 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: 24, scale: 0.98 }}
+            transition={{ duration: 0.18 }}
+            className={`border px-4 py-3 text-sm shadow-xl ${toneClasses[toast.tone]}`}
+          >
+            {toast.message}
+          </motion.div>
+        ))}
+      </AnimatePresence>
+    </div>
   )
 }
 
