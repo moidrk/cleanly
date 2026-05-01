@@ -51,6 +51,19 @@ interface WorkspaceFields {
   owner: string
 }
 
+const WORKSPACE_FIELD_KEYS: Array<keyof WorkspaceFields> = [
+  "status",
+  "enrichmentStatus",
+  "outreachStatus",
+  "responseStatus",
+  "attemptCount",
+  "lastContactedAt",
+  "nextFollowUpAt",
+  "notes",
+  "tags",
+  "owner",
+]
+
 interface LeadRecord {
   id: string
   original: CsvRow
@@ -650,7 +663,9 @@ export async function updateLeadWorkspace(
     workspace: nextWorkspace,
   } as unknown as Prisma.InputJsonValue
 
-  const changedFields = Object.keys(patch)
+  const changedFields = WORKSPACE_FIELD_KEYS.filter(
+    (fieldKey) => workspace[fieldKey] !== nextWorkspace[fieldKey]
+  )
 
   await prisma.$transaction([
     prisma.lead.update({

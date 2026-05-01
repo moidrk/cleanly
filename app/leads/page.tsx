@@ -1,5 +1,11 @@
+import { Suspense } from "react"
+
 import { CleanlyWorkspacePage } from "../page"
 
 export default function LeadsPage() {
-  return <CleanlyWorkspacePage initialTab="leads" />
+  return (
+    <Suspense fallback={<main className="min-h-screen bg-background" />}>
+      <CleanlyWorkspacePage initialTab="leads" />
+    </Suspense>
+  )
 }

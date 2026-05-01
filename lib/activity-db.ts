@@ -13,6 +13,19 @@ const ACTOR_NAMES = [
   "Pioneer",
 ]
 
+const WORKSPACE_FIELD_LABELS: Record<string, string> = {
+  status: "Cleanly status",
+  enrichmentStatus: "Enrichment status",
+  outreachStatus: "Outreach status",
+  responseStatus: "Response status",
+  attemptCount: "Attempt count",
+  lastContactedAt: "Last contacted",
+  nextFollowUpAt: "Follow-up date",
+  notes: "Notes",
+  tags: "Tags",
+  owner: "Owner",
+}
+
 export interface ActivityLogRecord {
   id: string
   entityType: string
@@ -39,6 +52,16 @@ export function getAnonymousActor(request: Request) {
 function normalizeMetadata(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {}
   return value as Record<string, unknown>
+}
+
+function getChangedFieldLabels(metadata: Record<string, unknown>) {
+  const changedFields = metadata.changedFields
+
+  if (!Array.isArray(changedFields)) return []
+
+  return changedFields
+    .filter((field): field is string => typeof field === "string")
+    .map((field) => WORKSPACE_FIELD_LABELS[field] ?? field)
 }
 
 function titleForAction(action: string) {
@@ -69,7 +92,10 @@ function descriptionForAction(action: string, metadata: Record<string, unknown>)
   }
 
   if (action === "lead.workspace_updated") {
-    return `Changed lead fields: ${String(metadata.changedFields ?? "workspace")}.`
+    const changedFields = getChangedFieldLabels(metadata)
+    return changedFields.length > 0
+      ? `Changed lead fields: ${changedFields.join(", ")}.`
+      : "Lead workspace was saved."
   }
 
   return "Workspace activity recorded."

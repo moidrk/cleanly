@@ -1,10 +1,10 @@
 "use client"
 
 import Link from "next/link"
-import { usePathname, useRouter } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useTheme } from "next-themes"
 import type { ChangeEvent, DragEvent } from "react"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   addWeeks,
   eachWeekOfInterval,
@@ -535,6 +535,19 @@ const VIEW_LABELS: Record<ViewKey, string> = {
   high_priority: "High Priority",
 }
 
+const ACTIVITY_CHANGED_FIELD_LABELS: Record<string, string> = {
+  status: "Cleanly status",
+  enrichmentStatus: "Enrichment status",
+  outreachStatus: "Outreach status",
+  responseStatus: "Response status",
+  attemptCount: "Attempt count",
+  lastContactedAt: "Last contacted",
+  nextFollowUpAt: "Follow-up date",
+  notes: "Notes",
+  tags: "Tags",
+  owner: "Owner",
+}
+
 const TAB_LABELS: Record<TabKey, string> = {
   enrich: "Enrich",
   workspace: "Workspace",
@@ -1006,6 +1019,18 @@ function leadMatchesView(lead: LeadRecord, view: ViewKey) {
   }
 }
 
+function isViewKey(value: string | null): value is ViewKey {
+  return value !== null && Object.hasOwn(VIEW_LABELS, value)
+}
+
+function getActivityChangedFieldLabels(metadata: Record<string, unknown>) {
+  if (!Array.isArray(metadata.changedFields)) return []
+
+  return metadata.changedFields
+    .filter((field): field is string => typeof field === "string")
+    .map((field) => ACTIVITY_CHANGED_FIELD_LABELS[field] ?? field)
+}
+
 function getLeadSortValue(lead: LeadRecord, sortKey: SortKey) {
   switch (sortKey) {
     case "qualityScore":
@@ -1061,6 +1086,7 @@ export function CleanlyWorkspacePage({
 }) {
   const pathname = usePathname()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { resolvedTheme, setTheme, theme } = useTheme()
   const activeTab = getTabFromPath(pathname) || initialTab
   const [project, setProject] = useState<LeadProject | null>(null)
@@ -1127,12 +1153,52 @@ export function CleanlyWorkspacePage({
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const currentProjectId = project?.id ?? ""
+  const selectedFileIdFromUrl = searchParams.get("fileId") ?? ""
+  const selectedViewFromUrl = searchParams.get("view")
+
+  const getTabHref = useCallback(
+    (tab: TabKey, projectId?: string, extraParams?: Record<string, string>) => {
+      const nextProjectId = projectId ?? currentProjectId
+      const href = new URL(TAB_ROUTES[tab], "http://localhost")
+
+      if (nextProjectId) {
+        href.searchParams.set("fileId", nextProjectId)
+      }
+
+      if (tab === "leads") {
+        const nextView =
+          extraParams?.view ??
+          (isViewKey(selectedViewFromUrl) ? selectedViewFromUrl : activeView)
+
+        if (nextView && nextView !== "all") {
+          href.searchParams.set("view", nextView)
+        }
+      }
+
+      Object.entries(extraParams ?? {}).forEach(([key, value]) => {
+        if (key === "view" && (!value || value === "all")) {
+          href.searchParams.delete(key)
+          return
+        }
+
+        if (!value) {
+          href.searchParams.delete(key)
+          return
+        }
+
+        href.searchParams.set(key, value)
+      })
+
+      return `${href.pathname}${href.search}`
+    },
+    [activeView, currentProjectId, selectedViewFromUrl]
+  )
 
   const goToTab = useCallback(
-    (tab: TabKey) => {
-      router.push(TAB_ROUTES[tab])
+    (tab: TabKey, projectId?: string, extraParams?: Record<string, string>) => {
+      router.push(getTabHref(tab, projectId, extraParams))
     },
-    [router]
+    [getTabHref, router]
   )
 
   const loadProjectFromDatabase = useCallback(async (projectId: string) => {
@@ -1254,58 +1320,84 @@ export function CleanlyWorkspacePage({
       if (!projectId) return
 
       await loadProjectFromDatabase(projectId)
-      goToTab(tab)
+      goToTab(tab, projectId)
       setSelectedLeadIds([])
       setLeadPage(1)
     },
     [goToTab, loadProjectFromDatabase]
   )
 
+  const persistProjectSnapshot = useCallback(
+    async (
+      snapshot: LeadProject,
+      options: {
+        successMessage?: string
+        refreshAncillary?: boolean
+      } = {}
+    ) => {
+      const {
+        successMessage = "Saved to workspace.",
+        refreshAncillary = true,
+      } = options
+
+      if (!snapshot) return false
+
+      setIsSavingProject(true)
+      setPersistenceMessage("")
+
+      try {
+        const response = await fetch("/api/projects", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(snapshot),
+        })
+        const payload = (await response.json()) as {
+          ok: boolean
+          project?: LeadProject
+          error?: string
+        }
+
+        if (!response.ok || !payload.project) {
+          setDatabaseState(response.status === 503 ? "unavailable" : databaseState)
+          setPersistenceMessage(payload.error ?? "Unable to save project.")
+          return false
+        }
+
+        const leads = withCleaningAnalysis(payload.project.leads)
+        setProject({
+          ...payload.project,
+          assignedWeek:
+            payload.project.assignedWeek || getWeekKey(new Date(payload.project.createdAt)),
+          leads,
+        })
+        setLastSavedAt(payload.project.updatedAt)
+        setDatabaseState("available")
+        setPersistenceMessage(successMessage)
+
+        if (refreshAncillary) {
+          await loadSavedProjects()
+          await loadDashboardAnalytics()
+          await loadActivityLogs()
+        }
+
+        return true
+      } catch {
+        setPersistenceMessage("Unable to reach the project API.")
+        return false
+      } finally {
+        setIsSavingProject(false)
+      }
+    },
+    [databaseState, loadActivityLogs, loadDashboardAnalytics, loadSavedProjects]
+  )
+
   const saveProjectToDatabase = useCallback(async () => {
     if (!project) return
 
-    setIsSavingProject(true)
-    setPersistenceMessage("")
-
-    try {
-      const response = await fetch("/api/projects", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(project),
-      })
-      const payload = (await response.json()) as {
-        ok: boolean
-        project?: LeadProject
-        error?: string
-      }
-
-      if (!response.ok || !payload.project) {
-        setDatabaseState(response.status === 503 ? "unavailable" : databaseState)
-        setPersistenceMessage(payload.error ?? "Unable to save project.")
-        return
-      }
-
-      const leads = withCleaningAnalysis(payload.project.leads)
-      setProject({
-        ...payload.project,
-        assignedWeek:
-          payload.project.assignedWeek || getWeekKey(new Date(payload.project.createdAt)),
-        leads,
-      })
-      setLastSavedAt(payload.project.updatedAt)
-      setDatabaseState("available")
-      setPersistenceMessage("Saved to workspace.")
-      await loadSavedProjects()
-      await loadDashboardAnalytics()
-      await loadActivityLogs()
-    } catch {
-      setPersistenceMessage("Unable to reach the project API.")
-    } finally {
-      setIsSavingProject(false)
-    }
-  }, [databaseState, loadActivityLogs, loadDashboardAnalytics, loadSavedProjects, project])
+    await persistProjectSnapshot(project)
+  }, [persistProjectSnapshot, project])
 
   const assignProjectToWeek = useCallback(
     async (projectId: string, weekKey: string) => {
@@ -1523,6 +1615,34 @@ export function CleanlyWorkspacePage({
       void loadActivityLogs()
     })
   }, [loadActivityLogs, loadDashboardAnalytics, loadSavedProjects])
+
+  useEffect(() => {
+    if (!selectedFileIdFromUrl) return
+    if (project?.id === selectedFileIdFromUrl) return
+    if (isLoadingProject) return
+
+    const timeoutId = window.setTimeout(() => {
+      void loadProjectFromDatabase(selectedFileIdFromUrl)
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [isLoadingProject, loadProjectFromDatabase, project?.id, selectedFileIdFromUrl])
+
+  useEffect(() => {
+    if (activeTab !== "leads") return
+
+    const nextView = isViewKey(selectedViewFromUrl) ? selectedViewFromUrl : "all"
+
+    if (activeView !== nextView) {
+      const timeoutId = window.setTimeout(() => {
+        setActiveView(nextView)
+        setLeadPage(1)
+        setSelectedLeadIds([])
+      }, 0)
+
+      return () => window.clearTimeout(timeoutId)
+    }
+  }, [activeTab, activeView, selectedViewFromUrl])
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -2143,6 +2263,8 @@ export function CleanlyWorkspacePage({
 
   const progressValue = getProgressValue(stats)
   const hasProject = Boolean(project)
+  const isResolvingSelectedProject =
+    Boolean(selectedFileIdFromUrl) && project?.id !== selectedFileIdFromUrl
   const previewLeads = useMemo(
     () => (project?.leads ?? []).slice(0, 10),
     [project?.leads]
@@ -2255,7 +2377,7 @@ export function CleanlyWorkspacePage({
               <TabButton
                 key={tab}
                 active={activeTab === tab}
-                href={TAB_ROUTES[tab]}
+                href={getTabHref(tab)}
                 icon={TAB_ICONS[tab]}
                 label={TAB_LABELS[tab]}
               />
@@ -2674,7 +2796,9 @@ export function CleanlyWorkspacePage({
                           <Filter />
                           Assign Later
                         </Button>
-                        <Button onClick={() => goToTab("leads")}>
+                        <Button
+                          onClick={() => goToTab("leads", undefined, { view: activeView })}
+                        >
                           <ArrowUpDown />
                           Full Lead Grid
                         </Button>
@@ -2750,6 +2874,7 @@ export function CleanlyWorkspacePage({
           activeTab !== "weekly" &&
           activeTab !== "settings" &&
           activeTab !== "logs" &&
+          !isResolvingSelectedProject &&
           !hasProject ? (
             <SavedFilePrompt
               title="Select a saved file"
@@ -2786,7 +2911,10 @@ export function CleanlyWorkspacePage({
                         enrichment surface.
                       </p>
                     </div>
-                    <Button variant="outline" onClick={() => goToTab("leads")}>
+                    <Button
+                      variant="outline"
+                      onClick={() => goToTab("leads", undefined, { view: activeView })}
+                    >
                       <PanelRight />
                       Open Lead Grid
                     </Button>
@@ -2799,7 +2927,7 @@ export function CleanlyWorkspacePage({
                           setActiveView(view)
                           setLeadPage(1)
                           setSelectedLeadIds([])
-                          goToTab("leads")
+                          goToTab("leads", undefined, { view })
                         }}
                         className="border border-border p-4 text-left transition-colors hover:border-foreground"
                       >
@@ -2851,7 +2979,9 @@ export function CleanlyWorkspacePage({
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => goToTab("leads")}
+                        onClick={() =>
+                          goToTab("leads", undefined, { view: activeView })
+                        }
                       >
                         Open
                       </Button>
@@ -3377,6 +3507,12 @@ export function CleanlyWorkspacePage({
               </section>
 
               {!hasProject ? (
+                isResolvingSelectedProject ? (
+                  <ProjectResolvingState
+                    fileId={selectedFileIdFromUrl}
+                    onImport={() => goToTab("enrich")}
+                  />
+                ) : (
                 <SavedFilePrompt
                   title="Select a file to view leads"
                   description="Open a saved file from the dropdown above to load its lead grid."
@@ -3389,6 +3525,7 @@ export function CleanlyWorkspacePage({
                     void openSavedProjectInTab(projectId, "leads")
                   }
                 />
+                )
               ) : (
                 <div className="grid gap-4">
               <section className="grid min-w-0 content-start gap-4">
@@ -4213,7 +4350,11 @@ export function CleanlyWorkspacePage({
 }
 
 export default function Page() {
-  return <CleanlyWorkspacePage initialTab="enrich" />
+  return (
+    <Suspense fallback={<main className="min-h-screen bg-background" />}>
+      <CleanlyWorkspacePage initialTab="enrich" />
+    </Suspense>
+  )
 }
 
 function TruncatedText({
@@ -5261,6 +5402,9 @@ function ActivityLogsView({
   onCloseLog: () => void
 }) {
   const selectedLog = logs.find((log) => log.id === selectedLogId) ?? null
+  const selectedLogChangedFields = selectedLog
+    ? getActivityChangedFieldLabels(selectedLog.metadata)
+    : []
 
   return (
     <div className="grid gap-4">
@@ -5341,10 +5485,13 @@ function ActivityLogsView({
                 <p className="text-[0.68rem] tracking-[0.2em] text-muted-foreground uppercase">
                   Log Detail
                 </p>
-                <h2 id="activity-log-title" className="mt-2 text-xl font-medium">
+                <h2
+                  id="activity-log-title"
+                  className="mt-2 break-words text-xl font-medium"
+                >
                   {selectedLog.title}
                 </h2>
-                <p className="mt-1 text-sm text-muted-foreground">
+                <p className="mt-1 break-words text-sm text-muted-foreground">
                   {selectedLog.description}
                 </p>
               </div>
@@ -5355,13 +5502,33 @@ function ActivityLogsView({
             <div className="grid gap-3 p-5">
               <InfoLine label="Actor" value={selectedLog.actor} />
               <InfoLine label="Action" value={selectedLog.action} />
-              <InfoLine label="Entity" value={`${selectedLog.entityType} ${selectedLog.entityId}`} />
+              <InfoLine
+                label="Entity"
+                value={`${selectedLog.entityType} ${selectedLog.entityId}`}
+              />
               <InfoLine label="Time" value={formatDateTime(selectedLog.createdAt)} />
+              {selectedLogChangedFields.length > 0 ? (
+                <div className="grid gap-2 border-b border-border pb-2">
+                  <p className="text-[0.68rem] tracking-[0.16em] text-muted-foreground uppercase">
+                    Changed fields
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedLogChangedFields.map((field) => (
+                      <span
+                        key={field}
+                        className="inline-flex rounded-full border border-border bg-muted/40 px-2.5 py-1 text-xs"
+                      >
+                        {field}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <div className="grid gap-2">
                 <p className="text-[0.68rem] tracking-[0.16em] text-muted-foreground uppercase">
                   Metadata
                 </p>
-                <pre className="max-h-80 overflow-auto border border-border bg-muted/30 p-3 text-xs">
+                <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words border border-border bg-muted/30 p-3 text-xs">
                   {JSON.stringify(selectedLog.metadata, null, 2)}
                 </pre>
               </div>
@@ -5629,6 +5796,44 @@ function SavedFilePrompt({
             No saved files are available yet.
           </div>
         ) : null}
+      </div>
+    </section>
+  )
+}
+
+function ProjectResolvingState({
+  fileId,
+  onImport,
+}: {
+  fileId: string
+  onImport: () => void
+}) {
+  return (
+    <section className="border border-border bg-background p-4">
+      <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <p className="text-[0.68rem] tracking-[0.2em] text-muted-foreground uppercase">
+            Workspace File
+          </p>
+          <h2 className="mt-2 text-2xl font-medium">Opening saved file</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+            Loading the selected file into this view. The lead grid will appear as soon
+            as the saved workspace finishes resolving.
+          </p>
+          <p className="mt-3 text-xs tracking-[0.16em] text-muted-foreground uppercase">
+            {fileId}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={onImport}>
+            <Upload />
+            Import CSV
+          </Button>
+        </div>
+      </div>
+      <div className="mt-4 flex items-center gap-3 border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
+        <LoaderCircle className="size-4 animate-spin" />
+        Opening the requested workspace file...
       </div>
     </section>
   )
